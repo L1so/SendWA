@@ -1,3 +1,108 @@
 #!/bin/sh
-# Initial commit 2 January 2023
-# First initial commit after moving to GitHub from Gitea
+# shellcheck disable=SC2183,SC2030,SC2086,SC2181,SC2031
+currentVersion="v1.0"; rev_date="2 Jan 2023"
+# Required Function
+is_installed() { command -v $1 >/dev/null 2>&1; }
+say () { printf "${cyan}%s${creset}" "$@"; }
+sayp() { printf "${cyan}%s${creset}\n" "$@"; }
+die() { printf "${cred}%s${creset}" "$@" >&2; }
+cleanup() {
+  tput cnorm
+  tput sgr0
+  rm -f $fiofile $lsblkfifo $fiores $mainjson
+}
+trap 'cleanup; trap - EXIT; exit' EXIT INT HUP
+# End Required Function
+disable_color() {
+  unset cred cgreen cyellw cblue cyan csky clyl creset
+}
+if ! is_installed perl; then
+  disable_color
+  die "Continuing without color as perl is not found"
+elif [ "$(tput colors)" -ne "256" ]; then
+  disable_color
+  die "Continuing without color as your terminal does not support 256 colors"
+else
+  if [ -t 1 ]; then
+    # Non bold
+    cred=$(tput sgr0; tput setaf 1 ${is_bsd:+0 0}); clyl=$(tput sgr0; tput setaf 11 ${is_bsd:+0 0})
+    cgreen=$(tput sgr0; tput setaf 2 ${is_bsd:+0 0}); cyan=$(tput sgr0; tput setaf 6 ${is_bsd:+0 0})
+    cyellw=$(tput sgr0; tput setaf 215 ${is_bsd:+0 0}); csky=$(tput sgr0; tput setaf 14 ${is_bsd:+0 0})
+    # Reset color
+    creset=$(tput sgr0)
+  else
+    disable_color
+  fi
+fi
+if ! is_installed curl; then
+  die "Curl not found, please install it first"
+  exit 1
+fi
+# BEGIN OPTION PARSING
+display_help() {
+  cat <<'EOT'
+  Usage: washell [options]
+  Options:
+  -o, --output            Save results to file in input directory (default: Current directory)
+  -k, --keep-file         Keep ent related files after successful run (default: Remove)
+  -c, --color=ARG         Enable or disable colored output (Valid ARG: yes, no, force)
+  -7, --use-env           Use environmental file in place of regular option
+  -6, --speedtest         Prefer speedtest in place of iperf3
+  -5, --region            Enable region based network test, otherwise will use mixed source
+  -r, --region=ARG        Specify region (Valid ARG: asia, africa, europe, northamerica, southamerica, oceania, mixed)
+  -j, --json              Save result as json
+  -i, --skip-ip           Skip IP blacklist check
+  -s, --skip-service      Skip internet service block check
+  -n, --show-ip           Display server public IP address
+  -h, --help              Display this help section
+  -v, --version           Display version
+EOT
+}
+usage_error () { printf "%s\n%s\n" "$1" "Try 'washell --help' to view available option" >&2; exit 2; }
+assert_argument () { { test "$1" != "$endofline" && case "$1" in -*) >&2 printf "%s\n" "$opt: Illegal input parameter ($1)"; exit 2;; esac; } || { printf "%s\n" "$2: requires an argument" >&2 && exit 2 ; }; }
+endofline=$(printf '\1\3\3\7')
+if [ "$#" != 0 ]; then
+  set -- "$@" "$endofline"
+  while [ "$1" != "$endofline" ]; do
+    opt="$1"; shift
+    case "$opt" in
+      --install) arg_first_install="true";;
+      -i|--skip-ip) arg_skip_ip="true";;
+      -s|--skip-service) arg_skip_service="true";;
+      -n|--show-ip) arg_show_ip="true";;
+      -6|--speedtest) arg_prefer_speedtest="true";;
+      -h|--help) display_help; exit 0;;
+      -v|--version) printf "%-8s %-1s %s\n" "Version" ":" "$currentVersion" "Revision" ":" "$rev_date"; exit 0;;
+      -|''|[!-]*) set -- "$@" "$opt";;
+      --*=*)      set -- "${opt%%=*}" "${opt#*=}" "$@";;
+      -[!-]?*)    set -- $(echo "${opt#-}" | sed 's/\(.\)/ -\1/g') "$@";;
+      --)         while [ "$1" != "$endofline" ]; do set -- "$@" "$1"; shift; done;;
+      -*)         usage_error "Unknown option: '$opt'";;
+      *)          exit 2;;
+    esac
+  done
+  shift
+fi
+# END OPTION PARSING
+# Main components
+header_intro() {
+  {
+    printf "${csky}%s\n" "# # # # # # # # # # # # # # # # # # # # # #"
+    printf "%s%s\n" "#${clyl} WAShell - Send Whatsapp from Terminal ! ${csky}#"
+    printf "%s\n" "# # # # # # # # # # # # # # # # # # # # # #"
+    printf "%s\n" "#${clyl}     https://github.com/L1so/WAShell${csky}     # "
+    printf "%s\n" "# # # # # # # # # # # # # # # # # # # # # #${creset}"
+    echo
+  }
+}
+do_install() {
+  header_intro
+  say "Please insert your API URL: "; read -r wa_api_url
+  say "Please insert your API Key: "; read -r wa_api_key
+  say "Testing your configuration..."
+  
+}
+main() {
+  do_install
+}
+main
