@@ -1,24 +1,40 @@
 #!/bin/sh
 # shellcheck disable=SC2183,SC2030,SC2086,SC2181,SC2031
 currentVersion="v1.0"; rev_date="2 Jan 2023"; mp="$HOME/.sendwa"; envfile="$mp/file.env"
+sendthisjson="$mp/temporary.json"; truenv="$mp/sw.env"
+[ -f "$envfile" ] && . $envfile
 # Required Function
 is_installed() { command -v $1 >/dev/null 2>&1; }
-say () { printf "${cyan}%s${creset}" "$@"; }
-sayp() { printf "${cyan}%s${creset}\n" "$@"; }
-logger() {
-  date_bracket=$(date +"[%D %T]")
-  printf "%b\n" "${clyl}$date_bracket ${csky}$*${creset}"
+_logger() {
+  [ "$1" = "n" ] && { _ns="\n" && shift ; }
+  printf "%b${ns}" "${clyl}${_not_interactive:+$(date +"[%D %T]") }${csky}$*${creset}" && unset _ns
 }
-dogger() {
-  date_bracket=$(date +"[%D %T]")
-  printf "%b\n" "${clyl}$date_bracket ${cred}$*${creset}" >&2
+_dogger() {
+  [ "$1" = "n" ] && { _ns="\n" && shift ; }
+  >&2 printf "%b${ns}" "${clyl}${_not_interactive:+$(date +"[%D %T]") }${cred}$*${creset}" && unset _ns
 }
-die() { printf "${cred}%s${creset}" "$@" >&2; }
-diep() { printf "${cred}%s${creset}\n" "$@" >&2; }
+_checkmark() {
+  printf "\033[55G%b\n" "${cgreen}[V]${creset}"
+}
+_crossmark() {
+  printf "\033[55G%b\n" "${cred}[X]${creset}"
+}
+_packjson() {
+  echo "[]" > $sendthisjson
+  _argNumber="$1"
+  _argText="$2"
+  $jq --arg thephone "$_argNumber" --arg thetext "$_argText" \
+  '. += [{"recipient_type":"individual","to":"\($thephone)","type":"text","text":{"body": "\($thetext)"}}]' $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
+}
+_ask_input() {
+  _question="$1"
+  _thevar="$2"
+  say "$_question" && read -r ${_thevar}
+}
 cleanup() {
   tput cnorm
   tput sgr0
-  rm -f $fiofile $lsblkfifo $fiores $mainjson
+  rm -f $sendthisjson
 }
 trap 'cleanup; trap - EXIT; exit' EXIT INT HUP
 # End Required Function
@@ -46,12 +62,12 @@ fi
 # Prioritize curl over wget
 if is_installed curl; then
   # 0 Implies curl
-  filegrab="c"
+  _filegrab="c"
 elif is_installed wget; then
   # 1 Implies wget
-  filegrab="w"
+  _filegrab="w"
 else
-  die "Neither wget nor curl is exist" "Please install it first"
+  diep "Neither wget nor curl is exist" "Please install it first"
   exit 1
 fi
 detect_profile() {
@@ -83,13 +99,119 @@ detect_profile() {
       detected_profile="$HOME/.zshrc"
     fi
   fi
-
   echo "$detected_profile"
+}
+_send() {
+  if [ "$_filegrab" = "c" ]; then
+    _httpcode=$(
+    curl -w "%{http_code}" -s -o /dev/null \
+    --location --request POST "$WA_API_URL" \
+    --header "Authorization: Bearer ${WA_API_KEY}" \
+    --data-binary "@${sendthisjson}"
+    )
+    if [ "_$_httpcode" = 200 ]; then _logger "Successfully sent message !" && return 0; else _dogger "Request failed to get through !" && return 1; fi
+  elif [ "$_filegrab" = "w" ]; then
+    wget --no-check-certificate -qO /dev/null \
+    --method POST --timeout=0 \
+    --header "Authorization: Bearer ${WA_API_KEY}" \
+    --body-file="${sendthisjson}" "$WA_API_URL"
+    if [ $? -eq 0 ]; _then logger "Successfully sent message !" && return 0; else _dogger "Request failed to get through !" && return 1; fi
+  fi
+}
+_send_test() {
+  if [ "$_filegrab" = "c" ]; then
+    curl --location --request POST "$wa_api_url" \
+    --header "Authorization: Bearer ${wa_api_key}" \
+    --data-raw '{ "recipient_type": "individual", "to": "'"$wa_test_phone_number"'", "type": "text", "text": { "body": "If you receive this message, this means the test is successful" }
+    }'
+  elif [ "$_filegrab" = "w" ]; then
+    wget --no-check-certificate --quiet \
+    --output /dev/null \
+    --method POST \
+    --timeout=0 \
+    --header "Authorization: Bearer ${wa_api_key}" \
+    --body-data '{ "recipient_type": "individual", "to": "'"$wa_test_phone_number"'", "type": "text", "text": { "body": "If you receive this message, this means the test is successful" }
+  }' "$wa_api_url"
+  fi
+}
+install() {
+  # Install configuration file
+  header_intro
+  _logger "Creating configuration file on $mp"
+  mkdir -p $mp/contact $mp/logs
+  cp ./sw.env $truenv 2>/dev/null
+  [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
+  # Install file
+  _logger "Install the script to $mp"
+  _profile="$(detect_profile)"
+  if [ "$_profile" ]; then
+    cp "$(readlink -f $0)" "${mp}/sendwa.sh"; chmod u+x "${mp}/sendwa.sh"
+    echo "alias sendwa=\"$mp/sendwa.sh\"" >> $_profile
+  fi
+  [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
+  _ask_input "Please insert your API URL: " wa_api_url
+  _ask_input "Please insert your API Key: " wa_api_key
+  _ask_input "Please insert your (international) phone number: " wa_test_phone_number
+  _logger "Testing your configuration..."
+  _send_test
+  [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
+  # Putting api config to env file
+  cat <<EOF > $envfile
+# DO NOT REMOVE THIS FILE UNDER ANY CIRCUMSTANCE
+WA_API_KEY="$wa_api_key"
+WA_API_URL="$wa_api_url"
+WA_ALIAS_LOCATION="$_profile"
+EOF
+  # Closing
+  _logger n "SendWA has been installed in $mp"
+  _logger n "This script will self delete in 2 secs"; sleep 2; rm -f -- "$0"
+}
+uninstall() {
+  # Remove alias from sourced file
+  [ -f "$envfile" ] && . $envfile || { _dogger n "Something went wrong please retry" && exit 1 }
+  _logger "Removing SendWA alias from $WA_ALIAS_LOCATION"
+  grep -v "alias sendwa=\"$mp/sendwa.sh\"" $WA_ALIAS_LOCATION > /tmp/temp_bashrc && mv /tmp/temp_bashrc $WA_ALIAS_LOCATION
+  [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
+  _logger "Removing directory $mp"
+  [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
+}
+formphone() {
+  case "$phonelist" in
+    *,*)
+    phonelist=$(echo "$phonelist" | tr -d '[:space:]' | tr ',' ' ')
+    for phone in $phonelist; do
+      if [ -z "${phone##*[!0-9]*}" ]; then
+        _dogger "$phone must be valid number" && continue
+      else
+        _packjson "$phone" "$text"
+      fi
+    done
+      ;;
+    *)
+    if [ -z "${phonelist##*[!0-9]*}" ]; then
+      _dogger "$phonelist must be valid number" && continue
+    else
+      _packjson "$phone" "$text"
+    fi
+      ;;
+  esac
+}
+interactive() {
+  # Ask phone number to
+  _ask_input "Target phone number: " _arg_target_number
+  # Ask string to be sent
+  _ask_input "Type string to send: " _arg_target_string
+  # Validate the variable
+  if [ "$arg_target_number" ] && [ "$arg_target_string" ]; then
+    _packjson "$_arg_target_number" "$_arg_target_string" && _send
+  else
+    _dogger n "One of the input is empty"; exit 1
+  fi
 }
 # BEGIN OPTION PARSING
 display_help() {
   cat <<'EOT'
-  Usage: washell [options]
+  Usage: sendwa [options]
   Options:
   -o, --output            Save results to file in input directory (default: Current directory)
   -k, --keep-file         Keep ent related files after successful run (default: Remove)
@@ -137,66 +259,11 @@ if [ "$#" != 0 ]; then
     esac
   done
   shift
+else
+  # Interactive mode
+  interactive
 fi
 # END OPTION PARSING
-# Main components
-formphone() {
-  sendthisjson="$mp/temporary.json"; echo "[]" > $sendthisjson
-  case "$phonelist" in
-    *,*)
-    phonelist=$(echo "$phonelist" | tr -d '[:space:]' | tr ',' ' ')
-    for phone in $phonelist; do
-      if [ -z "${phone##*[!0-9]*}" ]; then
-        die "$phone must be valid number"; continue
-      else
-        $jq --arg phony "$phone" --arg thetext "$text" \
-        '. += [{"recipient_type":"individual","to":"\($phony)","type":"text","text":{"body": "\($thetext)"}}]' $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
-      fi
-    done
-      ;;
-    *)
-    if [ -z "${phonelist##*[!0-9]*}" ]; then
-      die "$phonelist must be valid number"; continue
-    else
-      $jq --arg phony "$phonelist" --arg thetext "$text" \
-      '. += [{"recipient_type":"individual","to":"\($phony)","type":"text","text":{"body": "\($thetext)"}}]' $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
-    fi
-      ;;
-  esac
-}
-send() {
-  if [ "$filegrab" = "c" ]; then
-    _httpcode=$(
-    curl -w "%{http_code}" -s -o /dev/null \
-    --location --request POST "$WA_API_URL" \
-    --header "Authorization: Bearer ${WA_API_KEY}" \
-    --data-binary "@${sendthisjson}"
-    )
-    if [ "_$_httpcode" = 200 ]; then logger "Successfully sent message !"; else dogger "Request failed to get through !"; return 1; fi
-  elif [ "$filegrab" = "w" ]; then
-    wget --no-check-certificate -qO /dev/null \
-    --method POST --timeout=0 \
-    --header "Authorization: Bearer ${WA_API_KEY}" \
-    --body-file="${sendthisjson}" "$WA_API_URL"
-    if [ $? -eq 0 ]; then logger "Successfully sent message !"; else dogger "Request failed to get through !"; return 1; fi
-  fi
-}
-send_test() {
-  if [ "$filegrab" = "c" ]; then
-    curl --location --request POST "$wa_api_url" \
-    --header "Authorization: Bearer ${wa_api_key}" \
-    --data-raw '{ "recipient_type": "individual", "to": "'"$wa_test_phone_number"'", "type": "text", "text": { "body": "If you receive this message, this means the test is successful" }
-    }'
-  elif [ "$filegrab" = "w" ]; then
-    wget --no-check-certificate --quiet \
-    --output /dev/null \
-    --method POST \
-    --timeout=0 \
-    --header "Authorization: Bearer ${wa_api_key}" \
-    --body-data '{ "recipient_type": "individual", "to": "'"$wa_test_phone_number"'", "type": "text", "text": { "body": "If you receive this message, this means the test is successful" }
-  }' "$wa_api_url"
-  fi
-}
 header_intro() {
   {
     printf "${csky}%s\n" "# # # # # # # # # # # # # # # # # # # # # #"
@@ -205,45 +272,8 @@ header_intro() {
     echo
   }
 }
-install() {
-  # Install configuration file
-  header_intro
-  say "Creating configuration file on $mp"
-  mkdir -p $mp/contact $mp/logs
-  printf "${cgreen}%s${creset}\n" " [SUCCESS]"
-  # Install file
-  say "Install the script to $mp"
-  _profile="$(detect_profile)"
-  if [ "$_profile" ]; then
-    cp $_profile ${_profile}.backup # Jaga-jaga
-    echo 'sendwa=~/.sendwa/sendwa.sh' >> $_profile
-    cp "$(readlink -f $0)" "${mp}/sendwa.sh"
-  fi
-  printf "${cgreen}%s${creset}\n" " [SUCCESS]"
-  say "Please insert your API URL: "; read -r wa_api_url
-  say "Please insert your API Key: "; read -r wa_api_key
-  say "Please insert your (international) phone number: "; read -r wa_test_phone_number
-  say "Testing your configuration..."
-  send_test
-  if [ $? -eq 0 ]; then printf "${cgreen}%s${creset}\n" " [SUCCESS]"; else diep " [FAIL]" && exit 1; fi
-  # Putting api config to env file
-  cat <<EOF > $envfile
-# DO NOT REMOVE THIS FILE UNDER ANY CIRCUMSTANCE
-WA_API_KEY="$wa_api_key"
-WA_API_URL="$wa_api_url"
-EOF
-  # Closing
-  say 'SendWA has been installed, invoke this script with `sendwa [option]`'
-  sayp "This script will auto delete in 2 secs"; sleep 2; rm -f -- "$0"
-}
-uninstall() {
-  say "Removing $mp"
-  rm -r -- "$mp"
-  printf "${cgreen}%s${creset}\n" " [SUCCESS]"
-}
 main() {
-  [ -f "$envfile" ] && . $envfile
-  formphone
-  send
+  _not_interactive=y
+  formphone && _send
 }
 main
