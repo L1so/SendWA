@@ -1,11 +1,12 @@
 #!/bin/sh
 # shellcheck disable=SC2183,SC2030,SC2086,SC2181,SC2031
-currentVersion="v1.0"; rev_date="2 Jan 2023"
+currentVersion="v1.0"; rev_date="2 Jan 2023"; mp="$HOME/.sendwa"
 # Required Function
 is_installed() { command -v $1 >/dev/null 2>&1; }
 say () { printf "${cyan}%s${creset}" "$@"; }
 sayp() { printf "${cyan}%s${creset}\n" "$@"; }
 die() { printf "${cred}%s${creset}" "$@" >&2; }
+diep() { printf "${cred}%s${creset}\n" "$@" >&2; }
 cleanup() {
   tput cnorm
   tput sgr0
@@ -34,10 +35,49 @@ else
     disable_color
   fi
 fi
-if ! is_installed curl; then
-  die "Curl not found, please install it first"
+# Prioritize curl over wget
+if is_installed curl; then
+  # 0 Implies curl
+  filegrab="c"
+elif is_installed wget; then
+  # 1 Implies wget
+  filegrab="w"
+else
+  die "Neither wget nor curl is exist" "Please install it first"
   exit 1
 fi
+detect_profile() {
+  if [ -n "$PROFILE" -a -f "$PROFILE" ]; then
+    echo "$PROFILE"
+    return
+  fi
+  detected_profile=''
+  shelltype="$(basename "/$SHELL")"
+
+  if [ "$shelltype" = "bash" ]; then
+    if [ -f "$HOME/.bashrc" ]; then
+      detected_profile="$HOME/.bashrc"
+    elif [ -f "$HOME/.bash_profile" ]; then
+      detected_profile="$HOME/.bash_profile"
+    fi
+  elif [ "$shelltype" = "zsh" ]; then
+    detected_profile="$HOME/.zshrc"
+  fi
+
+  if [ -z "$detected_profile" ]; then
+    if [ -f "$HOME/.profile" ]; then
+      detected_profile="$HOME/.profile"
+    elif [ -f "$HOME/.bashrc" ]; then
+      detected_profile="$HOME/.bashrc"
+    elif [ -f "$HOME/.bash_profile" ]; then
+      detected_profile="$HOME/.bash_profile"
+    elif [ -f "$HOME/.zshrc" ]; then
+      detected_profile="$HOME/.zshrc"
+    fi
+  fi
+
+  echo "$detected_profile"
+}
 # BEGIN OPTION PARSING
 display_help() {
   cat <<'EOT'
@@ -66,11 +106,18 @@ if [ "$#" != 0 ]; then
   while [ "$1" != "$endofline" ]; do
     opt="$1"; shift
     case "$opt" in
-      --install) arg_first_install="true";;
-      -i|--skip-ip) arg_skip_ip="true";;
-      -s|--skip-service) arg_skip_service="true";;
-      -n|--show-ip) arg_show_ip="true";;
-      -6|--speedtest) arg_prefer_speedtest="true";;
+      --install) install && exit 0;;
+      -o|--number)
+      assert_argument "$1" "$opt"
+      phonelist="$1"
+      formphone
+      shift
+      ;;
+      -t|--text)
+      assert_argument "$1" "$opt"
+      text="$1"
+      shift
+      ;;
       -h|--help) display_help; exit 0;;
       -v|--version) printf "%-8s %-1s %s\n" "Version" ":" "$currentVersion" "Revision" ":" "$rev_date"; exit 0;;
       -|''|[!-]*) set -- "$@" "$opt";;
@@ -85,24 +132,95 @@ if [ "$#" != 0 ]; then
 fi
 # END OPTION PARSING
 # Main components
+formphone() {
+  randstring=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 10 | head -n 1)
+  randfile="$mp/numlist_${randstring}.txt"
+  case "$phonelist" in
+    *,*)
+    phonelist=$(echo "$phonelist" | tr -d '[:space:]' | tr ',' ' ')
+    for phone in $phonelist; do
+      if [ -z "${phone##*[!0-9]*}" ]; then
+        die "$phone must be valid number"; exit 1
+      else
+        printf %s "$phone" > $randfile # Crowdnumber
+      fi
+    done
+      ;;
+    *)
+    if [ -z "${phonelist##*[!0-9]*}" ]; then
+      die "$phonelist must be valid number"; exit 1
+    else
+      printf %s "$phonelist" > $randfile # Crowdnumber
+    fi
+      ;;
+  esac
+}
+send() {
+  if [ "$filegrab" = "c" ]; then
+    # Nomor Telepon
+    _notel="$1"
+    _text="$2"
+    curl --location
+  elif [ "$filegrab" = "w" ]; then
+    #statements
+  fi
+}
+send_test() {
+  if [ "$filegrab" = "c" ]; then
+    curl --location --request POST "$wa_api_url" \
+    --header "Authorization: Bearer ${wa_api_key}" \
+    --data-raw '{ "recipient_type": "individual", "to": "'"$wa_test_phone_number"'", "type": "text", "text": { "body": "If you receive this message, this means the test is successful" }
+    }'
+  elif [ "$filegrab" = "w" ]; then
+    wget --no-check-certificate --quiet \
+    --output /dev/null \
+    --method POST \
+    --timeout=0 \
+    --header "Authorization: Bearer ${wa_api_key}" \
+    --body-data '{ "recipient_type": "individual", "to": "'"$wa_test_phone_number"'", "type": "text", "text": { "body": "If you receive this message, this means the test is successful" }
+  }' "$wa_api_url"
+  fi
+}
 header_intro() {
   {
     printf "${csky}%s\n" "# # # # # # # # # # # # # # # # # # # # # #"
-    printf "%s%s\n" "#${clyl} WAShell - Send Whatsapp from Terminal ! ${csky}#"
+    printf "%s%s\n" "#${clyl} SendWA - Send Whatsapp from Terminal ! ${csky} #"
     printf "%s\n" "# # # # # # # # # # # # # # # # # # # # # #"
-    printf "%s\n" "#${clyl}     https://github.com/L1so/WAShell${csky}     # "
-    printf "%s\n" "# # # # # # # # # # # # # # # # # # # # # #${creset}"
     echo
   }
 }
-do_install() {
+install() {
+  # Install configuration file
   header_intro
+  say "Creating configuration file on $mp"
+  mkdir -p $mp/contact $mp/logs
+  printf "${cgreen}%s${creset}\n" " [SUCCESS]"
+  # Install file
+  say "Install the script to $mp"
+  _profile="$(detect_profile)"
+  if [ "$_profile" ]; then
+    cp $_profile ${_profile}.backup # Jaga-jaga
+    echo 'sendwa=~/.sendwa/sendwa.sh' >> $_profile
+    cp "$(readlink -f $0)" "${mp}/sendwa.sh"
+  fi
+  printf "${cgreen}%s${creset}\n" " [SUCCESS]"
   say "Please insert your API URL: "; read -r wa_api_url
   say "Please insert your API Key: "; read -r wa_api_key
+  say "Please insert your (international) phone number: "; read -r wa_test_phone_number
   say "Testing your configuration..."
-  
+  send_test
+  if [ $? -eq 0 ]; then printf "${cgreen}%s${creset}\n" " [SUCCESS]"; else diep " [FAIL]" && exit 1; fi
+  # Putting api config to env file
+  cat <<EOF > $mp/sendwa.env
+# DO NOT REMOVE THIS FILE UNDER ANY CIRCUMSTANCE
+WA_API="$wa_api_key"
+WA_URL="$wa_api_url"
+EOF
+  # Closing
+  say 'SendWA has been installed, invoke this script with `sendwa [option]`'
+  sayp "This script will auto delete in 2 secs"; sleep 2; rm -f -- "$0"
 }
 main() {
-  do_install
+
 }
 main
