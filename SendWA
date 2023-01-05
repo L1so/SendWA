@@ -2,16 +2,20 @@
 # shellcheck disable=SC2183,SC2030,SC2086,SC2181,SC2031
 currentVersion="v1.0"; rev_date="2 Jan 2023"; mp="$HOME/.sendwa"; envfile="$mp/file.env"
 sendthisjson="$mp/temporary.json"; truenv="$mp/sw.env"
+if [ ! -d "$mp" ] && [ "$1" != "--install" ]; then
+  >&2 printf "%s\n" "SendWA is not installed" "Please retry this script: $0 --install"
+  exit 1
+fi
 [ -f "$envfile" ] && . $envfile
 # Required Function
 is_installed() { command -v $1 >/dev/null 2>&1; }
 _logger() {
-  [ "$1" = "n" ] && { _ns="\n" && shift ; }
-  printf "%b${ns}" "${clyl}${_not_interactive:+$(date +"[%D %T]") }${csky}$*${creset}" && unset _ns
+  [ "$1" = "n" ] && _ns="\n" && shift
+  printf "%b${_ns}" "${clyl}${_not_interactive:+$(date +"[%D %T]") }${csky}$*${creset}" && unset _ns
 }
 _dogger() {
-  [ "$1" = "n" ] && { _ns="\n" && shift ; }
-  >&2 printf "%b${ns}" "${clyl}${_not_interactive:+$(date +"[%D %T]") }${cred}$*${creset}" && unset _ns
+  [ "$1" = "n" ] && _ns="\n" && shift
+  >&2 printf "%b${_ns}" "${clyl}${_not_interactive:+$(date +"[%D %T]") }${cred}$*${creset}" && unset _ns
 }
 _checkmark() {
   printf "\033[55G%b\n" "${cgreen}[V]${creset}"
@@ -29,7 +33,7 @@ _packjson() {
 _ask_input() {
   _question="$1"
   _thevar="$2"
-  say "$_question" && read -r ${_thevar}
+  _logger "$_question"; read -r "$_thevar"
 }
 cleanup() {
   tput cnorm
@@ -41,12 +45,9 @@ trap 'cleanup; trap - EXIT; exit' EXIT INT HUP
 disable_color() {
   unset cred cgreen cyellw cblue cyan csky clyl creset
 }
-if ! is_installed perl; then
+# Coloring
+if ! is_installed perl || [ "$(tput colors)" -ne "256" ]; then
   disable_color
-  die "Continuing without color as perl is not found"
-elif [ "$(tput colors)" -ne "256" ]; then
-  disable_color
-  die "Continuing without color as your terminal does not support 256 colors"
 else
   if [ -t 1 ]; then
     # Non bold
@@ -59,17 +60,71 @@ else
     disable_color
   fi
 fi
+header_intro() {
+  {
+    printf "${cyan}%s\n" "# # # # # # # # # # # # # # # # # # # # # #"
+    printf "%s%s\n" "#${clyl} SendWA - Send Whatsapp from Terminal ! ${cyan} #"
+    printf "%s\n" "# # # # # # # # # # # # # # # # # # # # # #${creset}"
+  }
+}
+# Define binary variable
+_jq_path="$mp/bin/jq"
+is_installed jq && jq="jq" || jq="$_jq_path/jq"
+_shellect_path="$mp/bin/shellect"
+shellect=$_shellect_path/shellect
 # Prioritize curl over wget
 if is_installed curl; then
   # 0 Implies curl
-  _filegrab="c"
+  _filegrab=c
 elif is_installed wget; then
   # 1 Implies wget
-  _filegrab="w"
+  _filegrab=w
 else
-  diep "Neither wget nor curl is exist" "Please install it first"
+  _dogger n "Neither wget nor curl is exist" "Please install it first"
   exit 1
 fi
+_fgrab() {
+  ddl_input="$1"
+  if [ "$_filegrab" = "c" ]; then
+    curl -kLs --connect-timeout 5 --retry 5 --retry-delay 0 -o $2 $ddl_input
+  elif [ "$_filegrab" = "w" ]; then
+    wget -q -O $2 $ddl_input
+  fi
+}
+# Most commonly would be 64 bit
+case "$(uname -m)" in
+  *x86_64*|*amd64*)
+  arch="x86_64"
+  jq_arch="64"
+  ;;
+  *i?86*)
+  arch="i386"
+  jq_arch="32"
+  ;;
+  *arm*|*aarch*)
+  case "$(getconf LONG_BIT)" in
+    *64*) arch="aarch64";;
+    *) arch="armhf";;
+  esac
+  ;;
+  *) die "Architecture not found"; exit 1;;
+esac
+depencheck() {
+  # jq binary
+  if [ "$jq" != "jq" ] && [ ! -f "$_jq_path/jq" ]; then
+    mkdir -p $_jq_path
+    case "$arch" in
+      "armhf"|"aarch64") jqddl="https://github.com/L1so/benchy/raw/main/binary/jq/jq_${arch}";;
+      *) jqddl="https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux${jq_arch}";;
+    esac
+    _fgrab "$jqddl" "$_jq_path/jq"
+    [ $? -eq 0 ] && chmod u+x $_jq_path/jq
+  fi
+  # shellect script
+  mkdir -p $_shellect_path
+  _fgrab "https://raw.githubusercontent.com/huijunchen9260/shellect/main/shellect" "$_shellect_path/shellect"
+  [ $? -eq 0 ] && chmod u+x $shellect
+}
 detect_profile() {
   if [ -n "$PROFILE" -a -f "$PROFILE" ]; then
     echo "$PROFILE"
@@ -109,37 +164,44 @@ _send() {
     --header "Authorization: Bearer ${WA_API_KEY}" \
     --data-binary "@${sendthisjson}"
     )
-    if [ "_$_httpcode" = 200 ]; then _logger "Successfully sent message !" && return 0; else _dogger "Request failed to get through !" && return 1; fi
+    if [ "$_httpcode" = 200 ]; then _logger n "Successfully sent message !" && return 0; else _dogger n "Request failed to get through !" && return 1; fi
   elif [ "$_filegrab" = "w" ]; then
     wget --no-check-certificate -qO /dev/null \
     --method POST --timeout=0 \
     --header "Authorization: Bearer ${WA_API_KEY}" \
     --body-file="${sendthisjson}" "$WA_API_URL"
-    if [ $? -eq 0 ]; _then logger "Successfully sent message !" && return 0; else _dogger "Request failed to get through !" && return 1; fi
+    if [ $? -eq 0 ]; then _logger n "Successfully sent message !" && return 0; else _dogger n "Request failed to get through !" && return 1; fi
   fi
 }
 _send_test() {
   if [ "$_filegrab" = "c" ]; then
-    curl --location --request POST "$wa_api_url" \
+    curl -s -o /dev/null --location --request POST "$wa_api_url" \
     --header "Authorization: Bearer ${wa_api_key}" \
     --data-raw '{ "recipient_type": "individual", "to": "'"$wa_test_phone_number"'", "type": "text", "text": { "body": "If you receive this message, this means the test is successful" }
     }'
   elif [ "$_filegrab" = "w" ]; then
-    wget --no-check-certificate --quiet \
-    --output /dev/null \
-    --method POST \
-    --timeout=0 \
+    wget --no-check-certificate -qO /dev/null \
+    --method POST --timeout=0 \
     --header "Authorization: Bearer ${wa_api_key}" \
     --body-data '{ "recipient_type": "individual", "to": "'"$wa_test_phone_number"'", "type": "text", "text": { "body": "If you receive this message, this means the test is successful" }
   }' "$wa_api_url"
   fi
 }
 install() {
-  # Install configuration file
+  [ -d "$mp" ] && { _logger n "Already installed"; exit 0; }
   header_intro
+  _ask_input "Please insert your API URL: " wa_api_url
+  _ask_input "Please insert your API Key: " wa_api_key
+  _ask_input "Please insert your (international) phone number: " wa_test_phone_number
+  _logger "Testing your configuration"
+  _send_test
+  [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
+  # Install configuration file
+  _logger "Installing dependency"
+  depencheck
+  [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
   _logger "Creating configuration file on $mp"
-  mkdir -p $mp/contact $mp/logs
-  cp ./sw.env $truenv 2>/dev/null
+  mkdir -p $mp/logs $mp/bin
   [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
   # Install file
   _logger "Install the script to $mp"
@@ -148,12 +210,6 @@ install() {
     cp "$(readlink -f $0)" "${mp}/sendwa.sh"; chmod u+x "${mp}/sendwa.sh"
     echo "alias sendwa=\"$mp/sendwa.sh\"" >> $_profile
   fi
-  [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
-  _ask_input "Please insert your API URL: " wa_api_url
-  _ask_input "Please insert your API Key: " wa_api_key
-  _ask_input "Please insert your (international) phone number: " wa_test_phone_number
-  _logger "Testing your configuration..."
-  _send_test
   [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
   # Putting api config to env file
   cat <<EOF > $envfile
@@ -164,11 +220,11 @@ WA_ALIAS_LOCATION="$_profile"
 EOF
   # Closing
   _logger n "SendWA has been installed in $mp"
-  _logger n "This script will self delete in 2 secs"; sleep 2; rm -f -- "$0"
+  _logger n "Log out/Log in back to apply changes"; sleep 2; rm -f -- "$0"
 }
 uninstall() {
   # Remove alias from sourced file
-  [ -f "$envfile" ] && . $envfile || { _dogger n "Something went wrong please retry" && exit 1 }
+  [ -f "$envfile" ] && . $envfile || { _dogger n "Something went wrong please retry" && exit 1; }
   _logger "Removing SendWA alias from $WA_ALIAS_LOCATION"
   grep -v "alias sendwa=\"$mp/sendwa.sh\"" $WA_ALIAS_LOCATION > /tmp/temp_bashrc && mv /tmp/temp_bashrc $WA_ALIAS_LOCATION
   [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
@@ -178,52 +234,66 @@ uninstall() {
 formphone() {
   case "$phonelist" in
     *,*)
-    phonelist=$(echo "$phonelist" | tr -d '[:space:]' | tr ',' ' ')
-    for phone in $phonelist; do
+    phone_list=$(echo "$phonelist" | tr -d '[:space:]' | tr ',' ' ')
+    for phone in $phone_list; do
       if [ -z "${phone##*[!0-9]*}" ]; then
-        _dogger "$phone must be valid number" && continue
+        _dogger n "$phone must be valid number"; return 1
       else
-        _packjson "$phone" "$text"
+        _packjson "$phone" "$_text"
       fi
     done
       ;;
     *)
     if [ -z "${phonelist##*[!0-9]*}" ]; then
-      _dogger "$phonelist must be valid number" && continue
+      _dogger n "$phonelist must be valid number"; return 1
     else
-      _packjson "$phone" "$text"
+      _packjson "$phonelist" "$_text"
     fi
       ;;
   esac
 }
 interactive() {
-  # Ask phone number to
-  _ask_input "Target phone number: " _arg_target_number
-  # Ask string to be sent
-  _ask_input "Type string to send: " _arg_target_string
-  # Validate the variable
-  if [ "$arg_target_number" ] && [ "$arg_target_string" ]; then
-    _packjson "$_arg_target_number" "$_arg_target_string" && _send
-  else
-    _dogger n "One of the input is empty"; exit 1
-  fi
+  # Select menu
+  _menuvalue=$(printf '%s\n' "Send Message" "Add Contact" | $shellect -t "Please choose your preferred action")
+  case "$_menuvalue" in
+    "Send Message")
+    # Ask phone number to
+    _ask_input "Target phone number: " _arg_target_number
+    # Ask string to be sent
+    _ask_input "Type string to send: " _arg_target_string
+    # Validate the variable
+    if [ "$_arg_target_number" ] && [ "$_arg_target_string" ]; then
+      _packjson "$_arg_target_number" "$_arg_target_string" && _send
+    else
+      _dogger n "One of the input is empty"; exit 1
+    fi
+      ;;
+    "Add Contact")
+    # Ask Contact Name
+    _ask_input "Contact name: " _arg_contact_name
+    _ask_input "Phone number: " _arg_target_number
+    if [ "$_arg_contact_name" ] && [ "$_arg_target_number" ]; then
+      cat <<EOF
+------------------------------------------------
+Contact Name    : $_arg_contact_name
+Contact Number  : ${_arg_target_number%????}****
+------------------------------------------------
+Press any key to continue
+EOF
+    read _theans
+    # Populate contact list
+    echo "$_arg_contact_name|$_arg_target_number" >> $mp/contact.list
+    fi
+    ;;
+  esac
 }
 # BEGIN OPTION PARSING
 display_help() {
   cat <<'EOT'
-  Usage: sendwa [options]
+Usage: sendwa [OPTION]...
   Options:
-  -o, --output            Save results to file in input directory (default: Current directory)
-  -k, --keep-file         Keep ent related files after successful run (default: Remove)
-  -c, --color=ARG         Enable or disable colored output (Valid ARG: yes, no, force)
-  -7, --use-env           Use environmental file in place of regular option
-  -6, --speedtest         Prefer speedtest in place of iperf3
-  -5, --region            Enable region based network test, otherwise will use mixed source
-  -r, --region=ARG        Specify region (Valid ARG: asia, africa, europe, northamerica, southamerica, oceania, mixed)
-  -j, --json              Save result as json
-  -i, --skip-ip           Skip IP blacklist check
-  -s, --skip-service      Skip internet service block check
-  -n, --show-ip           Display server public IP address
+  -o, --number=NUM        Number to send message
+  -t, --text=STRING       Text to send
   -h, --help              Display this help section
   -v, --version           Display version
 EOT
@@ -244,8 +314,21 @@ if [ "$#" != 0 ]; then
       shift
       ;;
       -t|--text)
+      if [ "$_is_from_file" ]; then
+        _dogger n "This option cannot coexist with -f"
+        exit 1
+      fi
       assert_argument "$1" "$opt"
-      text="$1"
+      _is_text="y"; _text="$1"
+      shift
+      ;;
+      -f|--text-file)
+      if [ "$_is_text" ]; then
+        _dogger n "This option cannot coexist with -t"
+        exit 1
+      fi
+      assert_argument "$1" "$opt"
+      _is_from_file="y"; _textfile="$1"
       shift
       ;;
       -h|--help) display_help; exit 0;;
@@ -261,17 +344,11 @@ if [ "$#" != 0 ]; then
   shift
 else
   # Interactive mode
-  interactive
+  if interactive; then
+    exit 0
+  fi
 fi
 # END OPTION PARSING
-header_intro() {
-  {
-    printf "${csky}%s\n" "# # # # # # # # # # # # # # # # # # # # # #"
-    printf "%s%s\n" "#${clyl} SendWA - Send Whatsapp from Terminal ! ${csky} #"
-    printf "%s\n" "# # # # # # # # # # # # # # # # # # # # # #"
-    echo
-  }
-}
 main() {
   _not_interactive=y
   formphone && _send
