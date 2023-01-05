@@ -254,11 +254,12 @@ formphone() {
 }
 interactive() {
   # Select menu
-  _menuvalue=$(printf '%s\n' "Send Message" "Add Contact" | $shellect -t "Please choose your preferred action")
+  _menuvalue=$(printf '%s\n' "Send Message" "Add Contact" "Quit" | $shellect -t "Please choose your preferred action (Press Q to Quit)")
   case "$_menuvalue" in
     "Send Message")
     # Ask phone number to
     _ask_input "Target phone number: " _arg_target_number
+    while [ -z "${_arg_target_number##*[!0-9]*}" ]; do _ask_input "Target phone number (must be a number): " _arg_target_number; done
     # Ask string to be sent
     _ask_input "Type string to send: " _arg_target_string
     # Validate the variable
@@ -272,17 +273,17 @@ interactive() {
     # Ask Contact Name
     _ask_input "Contact name: " _arg_contact_name
     _ask_input "Phone number: " _arg_target_number
-    if [ "$_arg_contact_name" ] && [ "$_arg_target_number" ]; then
-      cat <<EOF
-------------------------------------------------
-Contact Name    : $_arg_contact_name
-Contact Number  : ${_arg_target_number%????}****
-------------------------------------------------
-Press any key to continue
-EOF
-    read _theans
-    # Populate contact list
-    echo "$_arg_contact_name|$_arg_target_number" >> $mp/contact.list
+    while [ -z "${_arg_target_number##*[!0-9]*}" ]; do _ask_input "Phone number (must be a number): " _arg_target_number; done
+    if [ "$_arg_contact_name" ] && { [ "$_arg_target_number" ] && [ -n "${_arg_target_number##*[!0-9]*}" ]; }; then
+      # Generating shortname
+      _arg_ranum="$(awk -v min=1000 -v max=9999 'BEGIN{srand(); print int(min+rand()*(max-min+1))}')"
+      _arg_contact_shortname="${_arg_contact_name%"${_arg_contact_name#?}"}_$_arg_ranum"
+      # Populate contact list
+      echo "$_arg_contact_name|$_arg_target_number|${_arg_contact_shortname}" >> $mp/contact.list
+      _logger n "Successfully saved contact, the shortname is: $_arg_contact_shortname"
+    else
+      _dogger n "Error adding contact, please make sure the input is correct"
+      exit 1
     fi
     ;;
   esac
@@ -294,6 +295,7 @@ Usage: sendwa [OPTION]...
   Options:
   -o, --number=NUM        Number to send message
   -t, --text=STRING       Text to send
+  -f, --text-file=FILE    Pick file containing string to send
   -h, --help              Display this help section
   -v, --version           Display version
 EOT
@@ -323,12 +325,13 @@ if [ "$#" != 0 ]; then
       shift
       ;;
       -f|--text-file)
+      _is_from_file="y"
       if [ "$_is_text" ]; then
         _dogger n "This option cannot coexist with -t"
         exit 1
       fi
       assert_argument "$1" "$opt"
-      _is_from_file="y"; _textfile="$1"
+      [ -s "$1" ] && _text="$(cat $1)" || _dogger n "$1 is empty"
       shift
       ;;
       -h|--help) display_help; exit 0;;
