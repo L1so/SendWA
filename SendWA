@@ -26,7 +26,7 @@ _crossmark() {
 _packjson() {
   echo "[]" > $sendthisjson
   _argNumber="$1"
-  _argText="$2"
+  _argText="$2"; [ -f "$_argText" ] && { _logger n "Retrieving content of $_argText" && _argText=$(cat $_argText); }
   $jq --arg thephone "$_argNumber" --arg thetext "$_argText" \
   '. += [{"recipient_type":"individual","to":"\($thephone)","type":"text","text":{"body": "\($thetext)"}}]' $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
 }
@@ -239,7 +239,7 @@ formphone() {
       if [ -z "${phone##*[!0-9]*}" ]; then
         _dogger n "$phone must be valid number"; return 1
       else
-        _packjson "$phone" "$_text"
+        _packjson "$phone" "${_textfile:-$_text}"
       fi
     done
       ;;
@@ -247,14 +247,14 @@ formphone() {
     if [ -z "${phonelist##*[!0-9]*}" ]; then
       _dogger n "$phonelist must be valid number"; return 1
     else
-      _packjson "$phonelist" "$_text"
+      _packjson "$phonelist" "${_textfile:-$_text}"
     fi
       ;;
   esac
 }
 interactive() {
   # Select menu
-  _menuvalue=$(printf '%s\n' "Send Message" "Add Contact" "Quit" | $shellect -t "Please choose your preferred action (Press Q to Quit)")
+  _menuvalue=$(printf '%s\n' "Send Message" "Add Contact" "Select from contact" | $shellect -t "Please choose your preferred action (Press Q to Quit)")
   case "$_menuvalue" in
     "Send Message")
     # Ask phone number to
@@ -266,7 +266,7 @@ interactive() {
     if [ "$_arg_target_number" ] && [ "$_arg_target_string" ]; then
       _packjson "$_arg_target_number" "$_arg_target_string" && _send
     else
-      _dogger n "One of the input is empty"; exit 1
+      _dogger n "One of the input is empty"; return 1
     fi
       ;;
     "Add Contact")
@@ -274,7 +274,7 @@ interactive() {
     _ask_input "Contact name: " _arg_contact_name
     _ask_input "Phone number: " _arg_target_number
     while [ -z "${_arg_target_number##*[!0-9]*}" ]; do _ask_input "Phone number (must be a number): " _arg_target_number; done
-    if [ "$_arg_contact_name" ] && { [ "$_arg_target_number" ] && [ -n "${_arg_target_number##*[!0-9]*}" ]; }; then
+    if [ "$_arg_contact_name" ] && [ "$_arg_target_number" ]; then
       # Generating shortname
       _arg_ranum="$(awk -v min=1000 -v max=9999 'BEGIN{srand(); print int(min+rand()*(max-min+1))}')"
       _arg_contact_shortname="${_arg_contact_name%"${_arg_contact_name#?}"}_$_arg_ranum"
@@ -283,9 +283,23 @@ interactive() {
       _logger n "Successfully saved contact, the shortname is: $_arg_contact_shortname"
     else
       _dogger n "Error adding contact, please make sure the input is correct"
-      exit 1
+      return 1
     fi
     ;;
+    "Select from contact")
+    if [ -s "$mp/contact.list" ]; then
+      _selectvalue=$(awk -F'|' '{ printf("%-25s | %-15s | %5s\n", $1, $2, $3) ; }' "$mp/contact.list" | $shellect -t "Select your contact")
+      [ -z "$_selectvalue" ] && return 1
+      # Process the selected list
+      _selectvalue_num=$(echo "$_selectvalue" | awk -F'|' '{ print $2 }')
+      _ask_input "Type string to send: " _selectvalue_string
+      _packjson "$_selectvalue_num" "$_selectvalue_string" && _send
+    else
+      _dogger n "Contact list not found"
+      return 1
+    fi
+    ;;
+    "") return 1;;
   esac
 }
 # BEGIN OPTION PARSING
@@ -316,12 +330,13 @@ if [ "$#" != 0 ]; then
       shift
       ;;
       -t|--text)
+      _is_text="y"
       if [ "$_is_from_file" ]; then
         _dogger n "This option cannot coexist with -f"
         exit 1
       fi
       assert_argument "$1" "$opt"
-      _is_text="y"; _text="$1"
+      _text="$1"
       shift
       ;;
       -f|--text-file)
@@ -331,7 +346,7 @@ if [ "$#" != 0 ]; then
         exit 1
       fi
       assert_argument "$1" "$opt"
-      [ -s "$1" ] && _text="$(cat $1)" || _dogger n "$1 is empty"
+      _textfile="$1"; [ ! -s "$_textfile" ] && { _dogger n "$_textfile is empty"; exit 1 ; }
       shift
       ;;
       -h|--help) display_help; exit 0;;
@@ -347,9 +362,7 @@ if [ "$#" != 0 ]; then
   shift
 else
   # Interactive mode
-  if interactive; then
-    exit 0
-  fi
+  interactive; exit 0
 fi
 # END OPTION PARSING
 main() {
