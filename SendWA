@@ -26,9 +26,15 @@ _crossmark() {
 _packjson() {
   echo "[]" > $sendthisjson
   _argNumber="$1"
-  _argText="$2"; [ -f "$_argText" ] && { _logger n "Retrieving content of $_argText" && _argText=$(cat $_argText); }
-  $jq --arg thephone "$_argNumber" --arg thetext "$_argText" \
-  '. += [{"recipient_type":"individual","to":"\($thephone)","type":"text","text":{"body": "\($thetext)"}}]' $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
+  _argText="$2"
+  if [ -n "$_is_image" ]; then
+    $jq --arg thephone "$_argNumber" --arg thetext "$_argText" --arg theimage "$_img_file_base64" \
+    '. += [{"recipient_type":"individual","to":"\($thephone)","type":"image","image":{"raw": "\($theimage)", "caption": "\($thetext)"}}]' \
+    $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
+  else
+    $jq --arg thephone "$_argNumber" --arg thetext "$_argText" \
+    '. += [{"recipient_type":"individual","to":"\($thephone)","type":"text","text":{"body": "\($thetext)"}}]' $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
+  fi
 }
 _ask_input() {
   _question="$1"
@@ -86,9 +92,17 @@ fi
 _fgrab() {
   ddl_input="$1"
   if [ "$_filegrab" = "c" ]; then
-    curl -kLs --connect-timeout 5 --retry 5 --retry-delay 0 -o $2 $ddl_input
+    case "$ddl_input" in
+      *[Jj][Pp][Gg]|[Pp][Nn][Gg]|[Jj][Pp][Ee][Gg]*) _curl_opt="-O";;
+      *) _curl_opt="-o $2";;
+    esac
+    curl -kLs --connect-timeout 5 --retry 5 --retry-delay 0 $_curl_opt $ddl_input
   elif [ "$_filegrab" = "w" ]; then
-    wget -q -O $2 $ddl_input
+    case "$ddl_input" in
+      *[Jj][Pp][Gg]|[Pp][Nn][Gg]|[Jj][Pp][Ee][Gg]*) _wget_opt="-P";;
+      *) _wget_opt="-O";;
+    esac
+    wget -q $_wget_opt $2 $ddl_input
   fi
 }
 # Most commonly would be 64 bit
@@ -189,7 +203,7 @@ _send_test() {
 }
 install() {
   [ -d "$mp" ] && { _logger n "Already installed"; exit 0; }
-  header_intro
+  header_intro; unset _not_interactive
   _ask_input "Please insert your API URL: " wa_api_url
   _ask_input "Please insert your API Key: " wa_api_key
   _ask_input "Please insert your (international) phone number: " wa_test_phone_number
@@ -201,7 +215,7 @@ install() {
   depencheck
   [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
   _logger "Creating configuration file on $mp"
-  mkdir -p $mp/logs $mp/bin
+  mkdir -p $mp/logs $mp/bin $mp/gallery
   [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
   # Install file
   _logger "Install the script to $mp"
@@ -220,7 +234,7 @@ WA_ALIAS_LOCATION="$_profile"
 EOF
   # Closing
   _logger n "SendWA has been installed in $mp"
-  _logger n "Log out/Log in back to apply changes"; sleep 2; rm -f -- "$0"
+  _logger n "Log out/Log in back to apply changes"
 }
 uninstall() {
   # Remove alias from sourced file
@@ -229,6 +243,7 @@ uninstall() {
   grep -v "alias sendwa=\"$mp/sendwa.sh\"" $WA_ALIAS_LOCATION > /tmp/temp_bashrc && mv /tmp/temp_bashrc $WA_ALIAS_LOCATION
   [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
   _logger "Removing directory $mp"
+  rm -rf -- "$mp"
   [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
 }
 formphone() {
@@ -239,7 +254,7 @@ formphone() {
       if [ -z "${phone##*[!0-9]*}" ]; then
         _dogger n "$phone must be valid number"; return 1
       else
-        _packjson "$phone" "${_textfile:-$_text}"
+        _packjson "$phone" "$_text"
       fi
     done
       ;;
@@ -247,7 +262,7 @@ formphone() {
     if [ -z "${phonelist##*[!0-9]*}" ]; then
       _dogger n "$phonelist must be valid number"; return 1
     else
-      _packjson "$phonelist" "${_textfile:-$_text}"
+      _packjson "$phonelist" "$_text"
     fi
       ;;
   esac
@@ -310,6 +325,7 @@ Usage: sendwa [OPTION]...
   -o, --number=NUM        Number to send message
   -t, --text=STRING       Text to send
   -f, --text-file=FILE    Pick file containing string to send
+  -i, --image=ARG         Send image file (ARG could be link to image or path to image)
   -h, --help              Display this help section
   -v, --version           Display version
 EOT
@@ -318,7 +334,7 @@ usage_error () { printf "%s\n%s\n" "$1" "Try 'sendwa --help' to view available o
 assert_argument () { { test "$1" != "$endofline" && case "$1" in -*) >&2 printf "%s\n" "$opt: Illegal input parameter ($1)"; exit 2;; esac; } || { printf "%s\n" "$2: requires an argument" >&2 && exit 2 ; }; }
 endofline=$(printf '\1\3\3\7')
 if [ "$#" != 0 ]; then
-  set -- "$@" "$endofline"
+  set -- "$@" "$endofline"; _not_interactive=y
   while [ "$1" != "$endofline" ]; do
     opt="$1"; shift
     case "$opt" in
@@ -330,24 +346,51 @@ if [ "$#" != 0 ]; then
       shift
       ;;
       -t|--text)
-      _is_text="y"
+      assert_argument "$1" "$opt"
+      _is_text="y"; _text="$1"
       if [ "$_is_from_file" ]; then
         _dogger n "This option cannot coexist with -f"
         exit 1
       fi
-      assert_argument "$1" "$opt"
-      _text="$1"
       shift
       ;;
       -f|--text-file)
-      _is_from_file="y"
+      _is_from_file="y"; _textfile="$1";
       if [ "$_is_text" ]; then
         _dogger n "This option cannot coexist with -t"
         exit 1
       fi
       assert_argument "$1" "$opt"
-      _textfile="$1"; [ ! -s "$_textfile" ] && { _dogger n "$_textfile is empty"; exit 1 ; }
+      if [ -s "$_textfile" ]; then
+        _logger n "Retrieving content of $_textfile" && _text=$(cat $_textfile)
+      else
+        _dogger n "$_textfile is empty"; exit 1
+      fi
       shift
+      ;;
+      -i|--image)
+      _is_image=y; _img_input="$1"
+      assert_argument "$1" "$opt"
+      # Check whether input argument is link or path
+      if printf '%s' "$_img_input" | grep -qE '(https?|ftp|file)://[-[:alnum:]\+&@#/%?=~_|!:,.;]+'; then
+        # Download the image first
+        _img_date=$(date +"%Y_%m_%d_%H_%M_%S")
+        mkdir -p /tmp/tem_img_dir && cd /tmp/tem_img_dir
+        _fgrab "$_img_input" .
+        _thefilename=$(printf '%s' *)
+        _thefilename_ext="${_thefilename#*.}"
+        mv "$_thefilename" "$mp/gallery/download-${_img_date}.${_thefilename_ext}"
+        rm -rf /tmp/tem_img_dir && cd - >/dev/null
+        # Store the filename to variable
+        _img_file="$mp/gallery/download-${_img_date}.${_thefilename_ext}"
+      else
+        _img_file="$_img_input"
+      fi
+      if ! identify "$_img_file" >/dev/null 2>&1; then
+        _dogger n "Not an image file"
+        exit 1
+      fi
+      _img_file_base64="data:image/jpeg;base64,$(base64 -w 0 "$_img_file")"
       ;;
       -h|--help) display_help; exit 0;;
       -v|--version) printf "%-8s %-1s %s\n" "Version" ":" "$currentVersion" "Revision" ":" "$rev_date"; exit 0;;
@@ -366,7 +409,6 @@ else
 fi
 # END OPTION PARSING
 main() {
-  _not_interactive=y
   formphone && _send
 }
 main
