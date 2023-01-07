@@ -1,7 +1,7 @@
-#!/bin/sh
+#!/bin/bash
 # shellcheck disable=SC2183,SC2030,SC2086,SC2181,SC2031
-currentVersion="v1.0"; rev_date="2 Jan 2023"; mp="$HOME/.sendwa"; envfile="$mp/file.env"
-sendthisjson="$mp/temporary.json"; truenv="$mp/sw.env"
+currentVersion="v1.0"; rev_date="6 Jan 2023"; mp="$HOME/.sendwa"; envfile="$mp/file.env"; rd_out=/dev/stdout
+sendthisjson="$mp/temporary.json"; truenv="$mp/sw.env"; echo "[]" > $sendthisjson
 if [ ! -d "$mp" ] && [ "$1" != "--install" ]; then
   >&2 printf "%s\n" "SendWA is not installed" "Please retry this script: $0 --install"
   exit 1
@@ -11,11 +11,11 @@ fi
 is_installed() { command -v $1 >/dev/null 2>&1; }
 _logger() {
   [ "$1" = "n" ] && _ns="\n" && shift
-  printf "%b${_ns}" "${clyl}${_not_interactive:+$(date +"[%D %T]") }${csky}$*${creset}" && unset _ns
+  printf "%b${_ns}" "${clyl}${_not_interactive:+$(date +"[%D %T]") }${csky}$*${creset}" > $rd_out && unset _ns
 }
 _dogger() {
   [ "$1" = "n" ] && _ns="\n" && shift
-  >&2 printf "%b${_ns}" "${clyl}${_not_interactive:+$(date +"[%D %T]") }${cred}$*${creset}" && unset _ns
+  >&2 printf "%b${_ns}" "${clyl}${_not_interactive:+$(date +"[%D %T]") }${cred}$*${creset}" > $rd_out && unset _ns
 }
 _checkmark() {
   printf "\033[55G%b\n" "${cgreen}[V]${creset}"
@@ -24,11 +24,10 @@ _crossmark() {
   printf "\033[55G%b\n" "${cred}[X]${creset}"
 }
 _packjson() {
-  echo "[]" > $sendthisjson
   _argNumber="$1"
   _argText="$2"
   if [ -n "$_is_image" ]; then
-    $jq --arg thephone "$_argNumber" --arg thetext "$_argText" --arg theimage "$_img_file_base64" \
+    $jq --arg thephone "$_argNumber" --arg thetext "$_argText" --rawfile theimage "$_img_file_base64" \
     '. += [{"recipient_type":"individual","to":"\($thephone)","type":"image","image":{"raw": "\($theimage)", "caption": "\($thetext)"}}]' \
     $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
   else
@@ -37,14 +36,28 @@ _packjson() {
   fi
 }
 _ask_input() {
+  unset _limit _limitnum
+  [ "$1" = "l" ] && _limit=y && shift
+  [ "$1" = "ln" ] && _limitnum=y && shift
   _question="$1"
   _thevar="$2"
-  _logger "$_question"; read -r "$_thevar"
+  read -ep "${clyl}${_not_interactive:+$(date +"[%D %T]") }${csky}${_question}:"$'\e[0m ' "$_thevar"; eval _isivar="\$${_thevar}"
+  if [ -n "$_limit" ]; then
+    while [ "${#_isivar}" -lt 8 ]; do
+      read -ep "${clyl}${_not_interactive:+$(date +"[%D %T]") }${csky}${_question} (Minimum is 8 character):"$'\e[0m ' "$_thevar"
+      eval _isivar="\$${_thevar}"
+    done
+  elif [ -n "$_limitnum" ]; then
+    while [ "${#_isivar}" -lt 8 ] || [ -z "${_isivar##*[!0-9]*}" ]; do
+      read -ep "${clyl}${_not_interactive:+$(date +"[%D %T]") }${csky}${_question} (Minimum is 8 digit):"$'\e[0m ' "$_thevar"
+      eval _isivar="\$${_thevar}"
+    done
+  fi
 }
 cleanup() {
   tput cnorm
   tput sgr0
-  rm -f $sendthisjson
+  rm -f $sendthisjson $_img_file_base64
 }
 trap 'cleanup; trap - EXIT; exit' EXIT INT HUP
 # End Required Function
@@ -72,6 +85,22 @@ header_intro() {
     printf "%s%s\n" "#${clyl} SendWA - Send Whatsapp from Terminal ! ${cyan} #"
     printf "%s\n" "# # # # # # # # # # # # # # # # # # # # # #${creset}"
   }
+}
+_trimspace() {
+    _trimvar="$*"
+    # remove leading whitespace characters
+    _trimvar="${_trimvar#"${_trimvar%%[![:space:]]*}"}"
+    # remove trailing whitespace characters
+    _trimvar="${_trimvar%"${_trimvar##*[![:space:]]}"}"
+    printf '%s' "$_trimvar"
+}
+contactlist() {
+  [ ! -s "$mp/contact.list" ] && { _dogger n "Contact list is empty"; exit 1 ; }
+  printf "+%63s+\n" | tr ' ' '-'
+  printf "| %-30s | %-15s | %-10s |\n" "Contact Name" "Contact Number" "Short Name"
+  printf "+%63s+\n" | tr ' ' '='
+  awk -F '|' '{ printf("| %-30s | %-15s | %-10s |\n", $1, substr($2, 1, length($2)-4)"****", $3) }' "$mp/contact.list"
+  printf "+%63s+\n" | tr ' ' '-'
 }
 # Define binary variable
 _jq_path="$mp/bin/jq"
@@ -104,6 +133,30 @@ _fgrab() {
     esac
     wget -q $_wget_opt $2 $ddl_input
   fi
+}
+assert_image() {
+  _img_source="$1"; _is_image=y
+  # Check whether input argument is link or path
+  if printf '%s' "$_img_source" | grep -qE '(https?|ftp|file)://[-[:alnum:]\+&@#/%?=~_|!:,.;]+'; then
+    # Download the image first
+    _img_date=$(date +"%Y_%m_%d_%H_%M_%S")
+    mkdir -p /tmp/tem_img_dir && cd /tmp/tem_img_dir
+    _fgrab "$_img_source" .
+    _thefilename=$(printf '%s' *)
+    _thefilename_ext="${_thefilename#*.}"
+    mv "$_thefilename" "$mp/gallery/download-${_img_date}.${_thefilename_ext}"
+    rm -rf /tmp/tem_img_dir && cd - >/dev/null
+    # Store the filename to variable
+    _img_file="$mp/gallery/download-${_img_date}.${_thefilename_ext}"
+  else
+    _img_file="$_img_source"
+  fi
+  if ! identify "$_img_file" >/dev/null 2>&1; then
+    _dogger n "Not an image file"
+    exit 1
+  fi
+  _img_file_base64="$mp/temp_img_base64"
+  echo "data:image/jpeg;base64,$(base64 -w 0 "$_img_file")" > "$_img_file_base64"
 }
 # Most commonly would be 64 bit
 case "$(uname -m)" in
@@ -170,6 +223,10 @@ detect_profile() {
   fi
   echo "$detected_profile"
 }
+_find_by_shortname() {
+  _thesn="$1"; [ ! -s "$mp/contact.list" ] && { _dogger n "Contact list is empty"; exit 1; }
+  awk -v no="$_thesn" -F'|' '$NF ~ no { print $2 }' "$mp/contact.list" 2>/dev/null
+}
 _send() {
   if [ "$_filegrab" = "c" ]; then
     _httpcode=$(
@@ -204,9 +261,9 @@ _send_test() {
 install() {
   [ -d "$mp" ] && { _logger n "Already installed"; exit 0; }
   header_intro; unset _not_interactive
-  _ask_input "Please insert your API URL: " wa_api_url
-  _ask_input "Please insert your API Key: " wa_api_key
-  _ask_input "Please insert your (international) phone number: " wa_test_phone_number
+  _ask_input "Please insert your API URL" wa_api_url
+  _ask_input "Please insert your API Key" wa_api_key
+  _ask_input ln "Please insert your (international) phone number" wa_test_phone_number
   _logger "Testing your configuration"
   _send_test
   [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
@@ -233,8 +290,7 @@ WA_API_URL="$wa_api_url"
 WA_ALIAS_LOCATION="$_profile"
 EOF
   # Closing
-  _logger n "SendWA has been installed in $mp"
-  _logger n "Log out/Log in back to apply changes"
+  printf "${cgreen}%b${creset}\n" "SendWA has been installed" "Please execute . $_profile to apply changes" > $rd_out
 }
 uninstall() {
   # Remove alias from sourced file
@@ -246,69 +302,94 @@ uninstall() {
   rm -rf -- "$mp"
   [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
 }
+_split_by_comma() {
+  _arr_source="$1"
+  _arr_name="$2"
+  _arr_source=$(tr -d "[:space:]" <<< "$_arr_source")
+  IFS=',' read -ra ${_arr_name} <<< "$_arr_source"
+}
 formphone() {
-  case "$phonelist" in
-    *,*)
-    phone_list=$(echo "$phonelist" | tr -d '[:space:]' | tr ',' ' ')
-    for phone in $phone_list; do
-      if [ -z "${phone##*[!0-9]*}" ]; then
-        _dogger n "$phone must be valid number"; return 1
-      else
-        _packjson "$phone" "$_text"
-      fi
-    done
-      ;;
-    *)
-    if [ -z "${phonelist##*[!0-9]*}" ]; then
-      _dogger n "$phonelist must be valid number"; return 1
-    else
-      _packjson "$phonelist" "$_text"
-    fi
-      ;;
-  esac
+  if [ -n "$_is_sn" ]; then
+    # Converting shortname to phone number
+    for sn in "${arr_shortname[@]}"; do arr_phonelist+=( $(awk -v no="$sn" -F'|' '$NF ~ no { print $2 }' "$mp/contact.list") ); done
+  fi
+  for phone in "${arr_phonelist[@]}"; do
+    [ -z "${phone##*[!0-9]*}" ] && { _dogger n "$phone must be valid number" && return 1 ; }
+    _packjson "$phone" "$_text"
+  done
 }
 interactive() {
   # Select menu
-  _menuvalue=$(printf '%s\n' "Send Message" "Add Contact" "Select from contact" | $shellect -t "Please choose your preferred action (Press Q to Quit)")
+  _menuvalue=$(printf '%s\n' "Send Message" "Add/Delete Contact" "Select from contact" | $shellect -t "Please choose your preferred action (Press Q to Quit)")
   case "$_menuvalue" in
     "Send Message")
     # Ask phone number to
-    _ask_input "Target phone number: " _arg_target_number
-    while [ -z "${_arg_target_number##*[!0-9]*}" ]; do _ask_input "Target phone number (must be a number): " _arg_target_number; done
+    _ask_input ln "Target phone number" _arg_target_number
+    while [ -z "${_arg_target_number##*[!0-9]*}" ]; do _ask_input "Target phone number (must be a number)" _arg_target_number; done
     # Ask string to be sent
-    _ask_input "Type string to send: " _arg_target_string
+    _ask_input "Type string to send" _arg_target_string
+    # Ask images (if any)
+    _ask_input "Images link or path (optional)" _arg_target_image
     # Validate the variable
     if [ "$_arg_target_number" ] && [ "$_arg_target_string" ]; then
+      [ -n "$_arg_target_image" ] && assert_image "$_arg_target_image"
       _packjson "$_arg_target_number" "$_arg_target_string" && _send
     else
       _dogger n "One of the input is empty"; return 1
     fi
       ;;
-    "Add Contact")
-    # Ask Contact Name
-    _ask_input "Contact name: " _arg_contact_name
-    _ask_input "Phone number: " _arg_target_number
-    while [ -z "${_arg_target_number##*[!0-9]*}" ]; do _ask_input "Phone number (must be a number): " _arg_target_number; done
-    if [ "$_arg_contact_name" ] && [ "$_arg_target_number" ]; then
-      # Generating shortname
-      _arg_ranum="$(awk -v min=1000 -v max=9999 'BEGIN{srand(); print int(min+rand()*(max-min+1))}')"
-      _arg_contact_shortname="${_arg_contact_name%"${_arg_contact_name#?}"}_$_arg_ranum"
-      # Populate contact list
-      echo "$_arg_contact_name|$_arg_target_number|${_arg_contact_shortname}" >> $mp/contact.list
-      _logger n "Successfully saved contact, the shortname is: $_arg_contact_shortname"
-    else
-      _dogger n "Error adding contact, please make sure the input is correct"
-      return 1
-    fi
+    "Add/Delete Contact")
+    _selectvalue=$(printf '%s\n' "Add Contact" "Delete Contact" | $shellect -t "Please choose your preferred action (Press Q to Quit)")
+    case "$_selectvalue" in
+      "Add Contact")
+      # Ask Contact Name
+      _ask_input "Contact name" _arg_contact_name
+      _ask_input ln "Phone number" _arg_target_number
+      if [ "$_arg_contact_name" ] && [ "$_arg_target_number" ]; then
+        # Generating shortname
+        _arg_ranum="$(awk -v min=1000 -v max=9999 'BEGIN{srand(); print int(min+rand()*(max-min+1))}')"
+        _arg_contact_flower=$(echo "${_arg_contact_name%"${_arg_contact_name#?}"}" | tr '[:upper:]' '[:lower:]')
+        _arg_contact_shortname="${_arg_contact_flower}${_arg_ranum}"
+        # Populate contact list
+        echo "$_arg_contact_name|$_arg_target_number|${_arg_contact_shortname}" >> $mp/contact.list
+        _logger n "Successfully saved contact, your shortname is: $_arg_contact_shortname"
+      else
+        _dogger n "Error adding contact, please make sure the input is correct"
+        return 1
+      fi
+        ;;
+      "Delete Contact")
+      if [ -s "$mp/contact.list" ]; then
+        _subselectvalue=$(awk -F'|' '{ printf("%-25s | %-15s | %5s\n", $1, $2, $3) ; }' "$mp/contact.list" | $shellect -t "Delete selected contact")
+        [ -z "$_subselectvalue" ] && return 1
+        # Remove line containing list
+        _arg_target_name=$(echo "$_subselectvalue" | awk -F'|' '{ gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1; exit }')
+        _arg_target_number=$(echo "$_subselectvalue" | awk -F'|' '{ gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit }')
+        awk -v number="$_arg_target_number" '$0 !~ number' $mp/contact.list > $mp/temp_contact.list && mv $mp/temp_contact.list $mp/contact.list
+        _logger n "Successfully deleting ${_arg_target_name} from contact list !"
+      else
+        _dogger n "Contact list is empty" && return 1
+      fi
+        ;;
+    esac
     ;;
     "Select from contact")
     if [ -s "$mp/contact.list" ]; then
       _selectvalue=$(awk -F'|' '{ printf("%-25s | %-15s | %5s\n", $1, $2, $3) ; }' "$mp/contact.list" | $shellect -t "Select your contact")
       [ -z "$_selectvalue" ] && return 1
       # Process the selected list
-      _selectvalue_num=$(echo "$_selectvalue" | awk -F'|' '{ print $2 }')
-      _ask_input "Type string to send: " _selectvalue_string
-      _packjson "$_selectvalue_num" "$_selectvalue_string" && _send
+      _arg_target_number=$(echo "$_selectvalue" | awk -F'|' '{ print $2 }')
+      # Ask string to be sent
+      _ask_input "Type string to send" _arg_target_string
+      # Ask images (if any)
+      _ask_input "Images link or path (optional)" _arg_target_image
+      # Validate the variable
+      if [ "$_arg_target_string" ]; then
+        [ -n "$_arg_target_image" ] && assert_image "$_arg_target_image"
+        _packjson "$_arg_target_number" "$_arg_target_string" && _send
+      else
+        _dogger n "One of the input is empty"; return 1
+      fi
     else
       _dogger n "Contact list not found"
       return 1
@@ -323,9 +404,12 @@ display_help() {
 Usage: sendwa [OPTION]...
   Options:
   -o, --number=NUM        Number to send message
+  -S, --shortname=ARG     Shortname to send message
   -t, --text=STRING       Text to send
   -f, --text-file=FILE    Pick file containing string to send
   -i, --image=ARG         Send image file (ARG could be link to image or path to image)
+  -l, --contact-list      Print contact list
+  -q, --quiet             Quiet mode
   -h, --help              Display this help section
   -v, --version           Display version
 EOT
@@ -341,8 +425,13 @@ if [ "$#" != 0 ]; then
       --install) install && exit 0;;
       --uninstall) uninstall && exit 0;;
       -o|--number)
+      _is_num=y; phonelist="$1"
+      if [ "$_is_sn" ]; then
+        _dogger n "This option cannot coexist with -S"
+        exit 1
+      fi
       assert_argument "$1" "$opt"
-      phonelist="$1"
+      _split_by_comma "$phonelist" arr_phonelist
       shift
       ;;
       -t|--text)
@@ -371,27 +460,21 @@ if [ "$#" != 0 ]; then
       -i|--image)
       _is_image=y; _img_input="$1"
       assert_argument "$1" "$opt"
-      # Check whether input argument is link or path
-      if printf '%s' "$_img_input" | grep -qE '(https?|ftp|file)://[-[:alnum:]\+&@#/%?=~_|!:,.;]+'; then
-        # Download the image first
-        _img_date=$(date +"%Y_%m_%d_%H_%M_%S")
-        mkdir -p /tmp/tem_img_dir && cd /tmp/tem_img_dir
-        _fgrab "$_img_input" .
-        _thefilename=$(printf '%s' *)
-        _thefilename_ext="${_thefilename#*.}"
-        mv "$_thefilename" "$mp/gallery/download-${_img_date}.${_thefilename_ext}"
-        rm -rf /tmp/tem_img_dir && cd - >/dev/null
-        # Store the filename to variable
-        _img_file="$mp/gallery/download-${_img_date}.${_thefilename_ext}"
-      else
-        _img_file="$_img_input"
-      fi
-      if ! identify "$_img_file" >/dev/null 2>&1; then
-        _dogger n "Not an image file"
+      assert_image "$_img_input"
+      shift
+      ;;
+      -S|--shortname)
+      _is_sn=y; _sn_input="$1"
+      if [ "$_is_num" ]; then
+        _dogger n "This option cannot coexist with -o"
         exit 1
       fi
-      _img_file_base64="data:image/jpeg;base64,$(base64 -w 0 "$_img_file")"
+      assert_argument "$1" "$opt"
+      _split_by_comma "$_sn_input" arr_shortname
+      shift
       ;;
+      -l|--contact-list) contactlist; exit 0;;
+      -q|--quiet) rd_out=/dev/null;;
       -h|--help) display_help; exit 0;;
       -v|--version) printf "%-8s %-1s %s\n" "Version" ":" "$currentVersion" "Revision" ":" "$rev_date"; exit 0;;
       -|''|[!-]*) set -- "$@" "$opt";;
