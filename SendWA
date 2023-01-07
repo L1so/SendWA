@@ -1,11 +1,12 @@
 #!/bin/bash
 # shellcheck disable=SC2183,SC2030,SC2086,SC2181,SC2031
-currentVersion="v1.0"; rev_date="6 Jan 2023"; mp="$HOME/.sendwa"; envfile="$mp/file.env"; rd_out=/dev/stdout
-sendthisjson="$mp/temporary.json"; truenv="$mp/sw.env"; echo "[]" > $sendthisjson
+currentVersion="v1.1"; rev_date="7 Jan 2023"; mp="$HOME/.sendwa"; envfile="$mp/file.env"
+sendthisjson="$mp/temporary.json"; rd_out=/dev/stdout
 if [ ! -d "$mp" ] && [ "$1" != "--install" ]; then
   >&2 printf "%s\n" "SendWA is not installed" "Please retry this script: $0 --install"
   exit 1
 fi
+[ -d "$mp" ] && echo "[]" > $sendthisjson
 [ -f "$envfile" ] && . $envfile
 # Required Function
 is_installed() { command -v $1 >/dev/null 2>&1; }
@@ -41,16 +42,16 @@ _ask_input() {
   [ "$1" = "ln" ] && _limitnum=y && shift
   _question="$1"
   _thevar="$2"
-  read -ep "${clyl}${_not_interactive:+$(date +"[%D %T]") }${csky}${_question}:"$'\e[0m ' "$_thevar"; eval _isivar="\$${_thevar}"
+  read -ep "${clyl}${_not_interactive:+$(date +"[%D %T]") }${csky}${_question}:"$'\e[0m ' "$_thevar"; _isivar="${!_thevar}"
   if [ -n "$_limit" ]; then
     while [ "${#_isivar}" -lt 8 ]; do
       read -ep "${clyl}${_not_interactive:+$(date +"[%D %T]") }${csky}${_question} (Minimum is 8 character):"$'\e[0m ' "$_thevar"
-      eval _isivar="\$${_thevar}"
+      _isivar="${!_thevar}"
     done
   elif [ -n "$_limitnum" ]; then
     while [ "${#_isivar}" -lt 8 ] || [ -z "${_isivar##*[!0-9]*}" ]; do
       read -ep "${clyl}${_not_interactive:+$(date +"[%D %T]") }${csky}${_question} (Minimum is 8 digit):"$'\e[0m ' "$_thevar"
-      eval _isivar="\$${_thevar}"
+      _isivar="${!_thevar}"
     done
   fi
 }
@@ -65,7 +66,7 @@ disable_color() {
   unset cred cgreen cyellw cblue cyan csky clyl creset
 }
 # Coloring
-if ! is_installed perl || [ "$(tput colors)" -ne "256" ]; then
+if [ "$(tput colors)" -ne "256" ]; then
   disable_color
 else
   if [ -t 1 ]; then
@@ -273,6 +274,7 @@ install() {
   [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
   _logger "Creating configuration file on $mp"
   mkdir -p $mp/logs $mp/bin $mp/gallery
+  mv ./file.env $envfile && chmod 600 $envfile
   [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
   # Install file
   _logger "Install the script to $mp"
@@ -280,11 +282,11 @@ install() {
   if [ "$_profile" ]; then
     cp "$(readlink -f $0)" "${mp}/sendwa.sh"; chmod u+x "${mp}/sendwa.sh"
     echo "alias sendwa=\"$mp/sendwa.sh\"" >> $_profile
+    echo "alias sendwa-update=\"$mp/update.sh\"" >> $_profile
   fi
   [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
   # Putting api config to env file
-  cat <<EOF > $envfile
-# DO NOT REMOVE THIS FILE UNDER ANY CIRCUMSTANCE
+  cat <<EOF >> $envfile
 WA_API_KEY="$wa_api_key"
 WA_API_URL="$wa_api_url"
 WA_ALIAS_LOCATION="$_profile"
@@ -293,6 +295,7 @@ EOF
   printf "${cgreen}%b${creset}\n" "SendWA has been installed" "Please execute . $_profile to apply changes" > $rd_out
 }
 uninstall() {
+  unset _not_interactive
   # Remove alias from sourced file
   [ -f "$envfile" ] && . $envfile || { _dogger n "Something went wrong please retry" && exit 1; }
   _logger "Removing SendWA alias from $WA_ALIAS_LOCATION"
