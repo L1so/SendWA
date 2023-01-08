@@ -12,17 +12,17 @@ fi
 is_installed() { command -v $1 >/dev/null 2>&1; }
 _logger() {
   [ "$1" = "n" ] && _ns="\n" && shift
-  printf "%b${_ns}" "${clyl}${_not_interactive:+$(date +"[%D %T]") }${csky}$*${creset}" > $rd_out && unset _ns
+  printf "%b${_ns}" "${clyl}${_not_interactive:+$(date +"[%d %b %Y %l:%M:%S %p %Z]") }${csky}$*${creset}" > $rd_out && unset _ns
 }
 _dogger() {
   [ "$1" = "n" ] && _ns="\n" && shift
-  >&2 printf "%b${_ns}" "${clyl}${_not_interactive:+$(date +"[%D %T]") }${cred}$*${creset}" > $rd_out && unset _ns
+  >&2 printf "%b${_ns}" "${clyl}${_not_interactive:+$(date +"[%d %b %Y %l:%M:%S %p %Z]") }${cred}$*${creset}" > $rd_out && unset _ns
 }
 _checkmark() {
-  printf "\033[55G%b\n" "${cgreen}[\342\234\224]${creset}"
+  printf "\033[65G%b\n" "${cgreen}[\342\234\224]${creset}"
 }
 _crossmark() {
-  printf "\033[55G%b\n" "${cred}[\342\235\214]${creset}"
+  printf "\033[65G%b\n" "${cred}[\342\235\214]${creset}"
 }
 _packjson() {
   _argNumber="$1"
@@ -260,12 +260,16 @@ _send_test() {
   fi
 }
 install() {
+  _current_script_directory=$(dirname "$0")
   [ -d "$mp" ] && { _logger n "Already installed"; exit 0; }
+  [ ! -f "${_current_script_directory}/update.sh" ] && { _dogger n "Missing files, pleaes re-download from GitHub"; exit 1 ; }
   header_intro; unset _not_interactive
   _ask_input "Please insert your API URL" wa_api_url
   _ask_input "Please insert your API Key" wa_api_key
-  _ask_input ln "Please insert your (international) phone number" wa_test_phone_number
-  _logger "Testing your configuration"
+  _ask_input ln "Please insert your (international) phone number (optional)" wa_test_phone_number
+  if [ -n "$wa_test_phone_number" ]; then
+    printf '%s' "We will send test message to $wa_test_phone_number, press any key to proceed"; read
+  fi
   _send_test
   [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
   # Install configuration file
@@ -274,7 +278,8 @@ install() {
   [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
   _logger "Creating configuration file on $mp"
   mkdir -p $mp/logs $mp/bin $mp/gallery
-  mv ./file.env $envfile && chmod 600 $envfile
+  cp ./update.sh $mp/update.sh && chmod 755 $mp/update.sh
+  cp ./file.env $envfile && chmod 600 $envfile
   [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
   # Install file
   _logger "Install the script to $mp"
