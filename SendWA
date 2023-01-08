@@ -1,6 +1,6 @@
 #!/bin/bash
 # shellcheck disable=SC2030,SC2086,SC2181,SC2031,SC2015,SC2154
-currentVersion="v1.1"; rev_date="7 Jan 2023"; mp="$HOME/.sendwa"; envfile="$mp/file.env"
+currentVersion="v1.1"; rev_date="8 Jan 2023"; mp="$HOME/.sendwa"; envfile="$mp/file.env"
 sendthisjson="$mp/temporary.json"; rd_out=/dev/stdout
 if [ ! -d "$mp" ] && [ "$1" != "--install" ]; then
   >&2 printf "%s\n" "SendWA is not installed" "Please retry this script: $0 --install"
@@ -37,9 +37,10 @@ _packjson() {
   fi
 }
 _ask_input() {
-  unset _limit _limitnum
+  unset _limit _limitnum _limitnumop
   [ "$1" = "l" ] && _limit=y && shift
   [ "$1" = "ln" ] && _limitnum=y && shift
+  [ "$1" = "lno" ] && _limitnumop=y && shift
   _question="$1"
   _thevar="$2"
   read -ep "${clyl}${_not_interactive:+$(date +"[%D %T]") }${csky}${_question}:"$'\e[0m ' "$_thevar"; _isivar="${!_thevar}"
@@ -48,8 +49,9 @@ _ask_input() {
       read -ep "${clyl}${_not_interactive:+$(date +"[%D %T]") }${csky}${_question} (Minimum is 8 character):"$'\e[0m ' "$_thevar"
       _isivar="${!_thevar}"
     done
-  elif [ -n "$_limitnum" ]; then
+  elif [ -n "$_limitnum" ] || [ -n "$_limitnumop" ]; then
     while [ "${#_isivar}" -lt 8 ] || [ -z "${_isivar##*[!0-9]*}" ]; do
+      { [ -n "$_limitnumop" ] && [ -z "$_isivar" ]; } && break
       read -ep "${clyl}${_not_interactive:+$(date +"[%D %T]") }${csky}${_question} (Minimum is 8 digit):"$'\e[0m ' "$_thevar"
       _isivar="${!_thevar}"
     done
@@ -266,12 +268,12 @@ install() {
   header_intro; unset _not_interactive
   _ask_input "Please insert your API URL" wa_api_url
   _ask_input "Please insert your API Key" wa_api_key
-  _ask_input ln "Please insert your (international) phone number (optional)" wa_test_phone_number
+  _ask_input lno "Please insert your (international) phone number (optional)" wa_test_phone_number
   if [ -n "$wa_test_phone_number" ]; then
-    printf '%s' "We will send test message to $wa_test_phone_number, press any key to proceed"; read
+    _ask_input "We will send test message to $wa_test_phone_number, press any key to proceed"
+    _send_test
+    [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
   fi
-  _send_test
-  [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
   # Install configuration file
   _logger "Installing dependency"
   depencheck
@@ -304,7 +306,8 @@ uninstall() {
   # Remove alias from sourced file
   [ -f "$envfile" ] && . $envfile || { _dogger n "Something went wrong please retry" && exit 1; }
   _logger "Removing SendWA alias from $WA_ALIAS_LOCATION"
-  grep -v "alias sendwa=\"$mp/sendwa.sh\"" $WA_ALIAS_LOCATION > /tmp/temp_bashrc && mv /tmp/temp_bashrc $WA_ALIAS_LOCATION
+  grep -v "alias sendwa=\"$mp/sendwa.sh\"" $WA_ALIAS_LOCATION > /tmp/temp_reallytemp_bashrc && mv /tmp/temp_reallytemp_bashrc $WA_ALIAS_LOCATION
+  grep -v "alias sendwa-update=\"$mp/update.sh\"" $WA_ALIAS_LOCATION > /tmp/temp_reallytemp_bashrc && mv /tmp/temp_reallytemp_bashrc $WA_ALIAS_LOCATION
   [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
   _logger "Removing directory $mp"
   rm -rf -- "$mp"
