@@ -29,9 +29,10 @@ Masukkan API Key dan URL pada proses instalasi.
 
 Berikut adalah daftar provider WA Gateway yang sudah di dukung oleh SendWA.
 
-| Provider | Functionality|
-| --- | --- |
-| OneSender | ✔ |
+| Provider | Image|Document|
+| --- | --- | --- |
+| OneSender | ✔ |TBD|
+| Fonnte | ✔ |TBD|
 
 Bagi provider yang mau diintegrasikan layanannya ke skrip ini, bisa kirim email ke liso17(at)proton.me dengan melampirkan data berikut.
 
