@@ -6,8 +6,9 @@ if [ ! -d "$mp" ] && [ "$1" != "--install" ]; then
   >&2 printf "%s\n" "SendWA is not installed" "Please retry this script: $0 --install"
   exit 1
 fi
-[ -d "$mp" ] && echo "[]" > $sendthisjson
+[ -d "$mp" ] && echo "{}" > $sendthisjson
 [ -f "$envfile" ] && . $envfile
+_WA_PROVIDER=$(echo "$WA_PROVIDER" | sed 's/./\U&/')
 # Required Function
 is_installed() { command -v $1 >/dev/null 2>&1; }
 _logger() {
@@ -28,12 +29,34 @@ _packjson() {
   _argNumber="$1"
   _argText="$2"
   if [ -n "$_is_image" ]; then
-    $jq --arg thephone "$_argNumber" --arg thetext "$_argText" --rawfile theimage "$_img_file_base64" \
-    '. += [{"recipient_type":"individual","to":"\($thephone)","type":"image","image":{"raw": "\($theimage)", "caption": "\($thetext)"}}]' \
-    $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
+    if [ "$WA_PROVIDER" = "onesender" ]; then
+      $jq --arg thephone "$_argNumber" --arg thetext "$_argText" --arg theimage "$_img_file" \
+      '. += {"recipient_type":"individual","to":"\($thephone)","type":"image","image":{"link": "\($theimage)", "caption": "\($thetext)"}}' \
+      $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
+    elif [ "$WA_PROVIDER" = "fonnte" ]; then
+      $jq --arg thephone "$_argNumber" --arg thetext "$_argText" --arg theimage "$_img_file" \
+      '. += {"target":"\($thephone)","message":"\($thetext)","url": "\($theimage)"}' \
+      $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
+    fi
+  # elif [ -n "$_is_doc" ]; then
+  #   if [ "$WA_PROVIDER" = "onesender" ]; then
+  #     $jq --arg thephone "$_argNumber" --arg thedoc "$_doc_file" \
+  #     '. += {"recipient_type":"individual","to":"\($thephone)","type":"document","document":{"link": "\($thedoc)"}}' \
+  #     $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
+  #   elif [ "$WA_PROVIDER" = "fonnte" ]; then
+  #     $jq --arg thephone "$_argNumber" --arg thedoc "$_doc_file" \
+  #     '. += {"target":"\($thephone)","url": "\($thedoc)"}' \
+  #     $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
+  #   fi
   else
-    $jq --arg thephone "$_argNumber" --arg thetext "$_argText" \
-    '. += [{"recipient_type":"individual","to":"\($thephone)","type":"text","text":{"body": "\($thetext)"}}]' $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
+    if [ "$WA_PROVIDER" = "onesender" ]; then
+      $jq --arg thephone "$_argNumber" --arg thetext "$_argText" \
+      '. += {"recipient_type":"individual","to":"\($thephone)","type":"text","text":{"body": "\($thetext)"}}' \
+      $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
+    elif [ "$WA_PROVIDER" = "fonnte" ]; then
+      $jq --arg thephone "$_argNumber" --arg thetext "$_argText" '. += {"target":"\($thephone)","message":"\($thetext)"}' \
+      $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
+    fi
   fi
 }
 _ask_input() {
@@ -60,7 +83,7 @@ _ask_input() {
 cleanup() {
   tput cnorm
   tput sgr0
-  rm -f $sendthisjson $_img_file_base64
+  rm -f $sendthisjson
 }
 trap 'cleanup; trap - EXIT; exit' EXIT INT HUP
 # End Required Function
@@ -76,6 +99,8 @@ else
     cred=$(tput sgr0; tput setaf 1 ${is_bsd:+0 0}); clyl=$(tput sgr0; tput setaf 11 ${is_bsd:+0 0})
     cgreen=$(tput sgr0; tput setaf 2 ${is_bsd:+0 0}); cyan=$(tput sgr0; tput setaf 6 ${is_bsd:+0 0})
     cyellw=$(tput sgr0; tput setaf 215 ${is_bsd:+0 0}); csky=$(tput sgr0; tput setaf 14 ${is_bsd:+0 0})
+    # Bold
+    cbgreen=$(tput bold; tput setaf 2 ${is_bsd:+0 0}); cbsky=$(tput bold; tput setaf 14 ${is_bsd:+0 0})
     # Reset color
     creset=$(tput sgr0)
   else
@@ -110,56 +135,68 @@ _jq_path="$mp/bin/jq"
 is_installed jq && jq="jq" || jq="$_jq_path/jq"
 _shellect_path="$mp/bin/shellect"
 shellect=$_shellect_path/shellect
+shellect() { $shellect -b "${cbsky}SendWA${creset} - Powered by ${cbgreen}${_WA_PROVIDER:-Shell Script}" "$@"; }
 # Prioritize curl over wget
 if is_installed curl; then
   # 0 Implies curl
-  _filegrab=c
+  _fg=c
 elif is_installed wget; then
   # 1 Implies wget
-  _filegrab=w
+  _fg=w
 else
   _dogger n "Neither wget nor curl is exist" "Please install it first"
   exit 1
 fi
 _fgrab() {
   ddl_input="$1"
-  if [ "$_filegrab" = "c" ]; then
+  if [ "$_fg" = "c" ]; then
     case "$ddl_input" in
-      *[Jj][Pp][Gg]|[Pp][Nn][Gg]|[Jj][Pp][Ee][Gg]*) _curl_opt="-O";;
-      *) _curl_opt="-o $2";;
+      imgpath) shift; _file="$1"
+      set -- -X POST https://api.imgbb.com/1/upload?expiration=300\&key=${_IMGBB_API} -F image=@${_file};;
+      *) set -- "-L --connect-timeout 5 --retry 5 --retry-delay 0 -o $2 ${ddl_input}";;
     esac
-    curl -kLs --connect-timeout 5 --retry 5 --retry-delay 0 $_curl_opt $ddl_input
-  elif [ "$_filegrab" = "w" ]; then
+    curl -s "$@"
+  elif [ "$_fg" = "w" ]; then
     case "$ddl_input" in
-      *[Jj][Pp][Gg]|[Pp][Nn][Gg]|[Jj][Pp][Ee][Gg]*) _wget_opt="-P";;
-      *) _wget_opt="-O";;
+      # imgpath) { _dogger n "This function is not available on wget" && return 1; };shift; _file="$1"
+      #   set -- -S --method PUT --header "Max-Days: 1" --header "Max-Downloads: 1" --body-file=${_file} https://transfer.sh/${_file##*/} -O- -nv;;
+      # del) shift; _filedel="$1"; set -- -q --method DELETE ${_filedel};;
+      *) set -- "-qO $2 $ddl_input";;
     esac
-    wget -q $_wget_opt $2 $ddl_input
+    wget "$@" 2>&1
   fi
 }
-assert_image() {
-  _img_source="$1"; _is_image=y
-  # Check whether input argument is link or path
-  if printf '%s' "$_img_source" | grep -qE '(https?|ftp|file)://[-[:alnum:]\+&@#/%?=~_|!:,.;]+'; then
-    # Download the image first
-    _img_date=$(date +"%Y_%m_%d_%H_%M_%S")
-    mkdir -p /tmp/tem_img_dir && cd /tmp/tem_img_dir
-    _fgrab "$_img_source" .
-    _thefilename=$(printf '%s' *)
-    _thefilename_ext="${_thefilename#*.}"
-    mv "$_thefilename" "$mp/gallery/download-${_img_date}.${_thefilename_ext}"
-    rm -rf /tmp/tem_img_dir && cd - >/dev/null
-    # Store the filename to variable
-    _img_file="$mp/gallery/download-${_img_date}.${_thefilename_ext}"
-  else
-    _img_file="$_img_source"
+_pickProvider() {
+  _logger n "Pick a WA Gateway Provider: "
+  select _provider in "$@"; do
+    [ -n "$_provider" ] && { _provider=$(echo "$_provider" | tr '[:upper:]' '[:lower:]') && break; }
+  done
+}
+assert_file() {
+  # Differentiate between image and document
+  if [ "$1" = "img" ]; then
+    shift; _img_source="$1"; _is_img=y; _IMGBB_API="e8b28f1e0553caa8c140b12ef7561d61"
+    if printf '%s' "$_img_source" | grep -qE '(https?|ftp|file)://[-[:alnum:]\+&@#/%?=~_|!:,.;]+'; then
+      _img_file="$_img_source"
+    elif file "$_img_source" | grep -qE 'image|bitmap'; then
+      # Upload the image first
+      _logger n "Uploading image..."
+      _img_file=$(_fgrab imgpath "$_img_source" | sed -n 's|.*"url":"\([^"]*\)".*|\1|p' | tr -d '\\')
+      _logger n "Image is uploaded on ${cgreen}${_img_file}"
+    else
+      _dogger n "Not an image file"
+      return 1
+    fi
+  # elif [ "$1" = "doc" ]; then
+  #   shift; _doc_source="$1"; _is_doc=y
+  #   if printf '%s' "$_doc_source" | grep -qE '(https?|ftp|file)://[-[:alnum:]\+&@#/%?=~_|!:,.;]+'; then
+  #     _doc_file="$_doc_source"
+  #   else
+  #     _logger n "Uploading file..."
+  #     _doc_file=$(_fgrab filepath "$_doc_source" | awk -F ': ' 'tolower($0) ~ /x-url-delete/{ print $2 }')
+  #     _logger n "File is uploaded on ${cgreen}${_doc_file%/*}"
+  #   fi
   fi
-  if ! identify "$_img_file" >/dev/null 2>&1; then
-    _dogger n "Not an image file"
-    exit 1
-  fi
-  _img_file_base64="$mp/temp_img_base64"
-  echo "data:image/jpeg;base64,$(base64 -w 0 "$_img_file")" > "$_img_file_base64"
 }
 # Most commonly would be 64 bit
 case "$(uname -m)" in
@@ -231,34 +268,53 @@ _find_by_shortname() {
   awk -v no="$_thesn" -F'|' '$NF ~ no { print $2 }' "$mp/contact.list" 2>/dev/null
 }
 _send() {
-  if [ "$_filegrab" = "c" ]; then
+  [ "$WA_PROVIDER" = "onesender" ] && _is_bearer=y
+  if [ "$_fg" = "c" ]; then
     _httpcode=$(
     curl -w "%{http_code}" -s -o /dev/null \
     --location --request POST "$WA_API_URL" \
-    --header "Authorization: Bearer ${WA_API_KEY}" \
+    --header "Authorization: ${_is_bearer:+Bearer} ${WA_API_KEY}" \
+    --header 'Content-Type: application/json' \
     --data-binary "@${sendthisjson}"
     )
     if [ "$_httpcode" = 200 ]; then _logger n "Successfully sent message !" && return 0; else _dogger n "Request failed to get through !" && return 1; fi
-  elif [ "$_filegrab" = "w" ]; then
+  elif [ "$_fg" = "w" ]; then
     wget --no-check-certificate -qO /dev/null \
     --method POST --timeout=0 \
-    --header "Authorization: Bearer ${WA_API_KEY}" \
+    --header "Authorization: ${_is_bearer:+Bearer} ${WA_API_KEY}" \
+    --header 'Content-Type: application/json' \
     --body-file="${sendthisjson}" "$WA_API_URL"
     if [ $? -eq 0 ]; then _logger n "Successfully sent message !" && return 0; else _dogger n "Request failed to get through !" && return 1; fi
   fi
 }
 _send_test() {
-  if [ "$_filegrab" = "c" ]; then
+  if [ "$_provider" = "onesender" ]; then
+    _data_raw='{
+	"recipient_type": "individual",
+	"to": "'"$wa_test_phone_number"'",
+	"type": "text",
+	"text": {
+		"body": "If you receive this message, this means SendWA has been installed correctly"
+	}
+}'
+  elif [ "$_provider" = "fonnte" ]; then
+    _data_raw='{
+	"target": "'"$wa_test_phone_number"'",
+	"message": "If you receive this message, this means SendWA has been installed correctly"
+}'
+  fi
+  [ "$_provider" = "onesender" ] && is_bearer_test=y
+  if [ "$_fg" = "c" ]; then
     curl -s -o /dev/null --location --request POST "$wa_api_url" \
-    --header "Authorization: Bearer ${wa_api_key}" \
-    --data-raw '{ "recipient_type": "individual", "to": "'"$wa_test_phone_number"'", "type": "text", "text": { "body": "If you receive this message, this means the test is successful" }
-    }'
-  elif [ "$_filegrab" = "w" ]; then
+    --header "Authorization: ${_is_bearer_test:+Bearer} ${wa_api_key}" \
+    --header 'Content-Type: application/json' \
+    --data-raw "$_data_raw"
+  elif [ "$_fg" = "w" ]; then
     wget --no-check-certificate -qO /dev/null \
     --method POST --timeout=0 \
     --header "Authorization: Bearer ${wa_api_key}" \
-    --body-data '{ "recipient_type": "individual", "to": "'"$wa_test_phone_number"'", "type": "text", "text": { "body": "If you receive this message, this means the test is successful" }
-  }' "$wa_api_url"
+    --body-data "$_data_raw" \
+    "$wa_api_url"
   fi
 }
 install() {
@@ -266,13 +322,14 @@ install() {
   [ -d "$mp" ] && { _logger n "Already installed"; exit 0; }
   [ ! -f "${_current_script_directory}/update.sh" ] && { _dogger n "Missing files, pleaes re-download from GitHub"; exit 1 ; }
   header_intro; unset _not_interactive
-  _ask_input "Please insert your API URL" wa_api_url
-  _ask_input "Please insert your API Key" wa_api_key
+  _pickProvider "OneSender" "Fonnte"
+  [ "$_provider" = "fonnte" ] && wa_api_url="https://api.fonnte.com/send" || _ask_input l "Please insert your API URL" wa_api_url
+  _ask_input l "Please insert your API Key" wa_api_key
   _ask_input lno "Please insert your (international) phone number (optional)" wa_test_phone_number
   if [ -n "$wa_test_phone_number" ]; then
-    _ask_input "We will send test message to $wa_test_phone_number, press any key to proceed"
+    _ask_input "We will send test message to $wa_test_phone_number, press any key to proceed" _just_do_the_thang
     _send_test
-    [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
+    [ $? -eq 0 ] || exit 1
   fi
   # Install configuration file
   _logger "Installing dependency"
@@ -294,6 +351,7 @@ install() {
   [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
   # Putting api config to env file
   cat <<EOF >> $envfile
+WA_PROVIDER="$_provider"
 WA_API_KEY="$wa_api_key"
 WA_API_URL="$wa_api_url"
 WA_ALIAS_LOCATION="$_profile"
@@ -320,18 +378,20 @@ _split_by_comma() {
   IFS=',' read -ra ${_arr_name} <<< "$_arr_source"
 }
 formphone() {
+  _delim=""; _joined=""
   if [ -n "$_is_sn" ]; then
     # Converting shortname to phone number
     for sn in "${arr_shortname[@]}"; do arr_phonelist+=( $(awk -v no="$sn" -F'|' '$NF ~ no { print $2 }' "$mp/contact.list") ); done
   fi
   for phone in "${arr_phonelist[@]}"; do
     [ -z "${phone##*[!0-9]*}" ] && { _dogger n "$phone must be valid number" && return 1 ; }
-    _packjson "$phone" "$_text"
+    _joined="$_joined$_delim$phone"; _delim=","
   done
+  _packjson "$_joined" "$_text"
 }
 interactive() {
   # Select menu
-  _menuvalue=$(printf '%s\n' "Send Message" "Add/Delete Contact" "Select from contact" | $shellect -t "Please choose your preferred action (Press Q to Quit)")
+  _menuvalue=$(printf '%s\n' "Send Message" "Add/Delete Contact" "Select from contact" | shellect -t "Please choose your preferred action (Press Q to Quit)")
   case "$_menuvalue" in
     "Send Message")
     # Ask phone number to
@@ -341,16 +401,19 @@ interactive() {
     _ask_input "Type string to send" _arg_target_string
     # Ask images (if any)
     _ask_input "Images link or path (optional)" _arg_target_image
+    # Ask document or file (if any)
+    #_ask_input "Document link or path (optional)" _arg_target_docs
     # Validate the variable
     if [ "$_arg_target_number" ] && [ "$_arg_target_string" ]; then
-      [ -n "$_arg_target_image" ] && assert_image "$_arg_target_image"
+      [ -n "$_arg_target_image" ] && assert_file img "$_arg_target_image"
+      #[ -n "$_arg_target_docs" ] && assert_file doc "$_arg_target_docs"
       _packjson "$_arg_target_number" "$_arg_target_string" && _send
     else
       _dogger n "One of the input is empty"; return 1
     fi
       ;;
     "Add/Delete Contact")
-    _selectvalue=$(printf '%s\n' "Add Contact" "Delete Contact" | $shellect -t "Please choose your preferred action (Press Q to Quit)")
+    _selectvalue=$(printf '%s\n' "Add Contact" "Delete Contact" | shellect -t "Please choose your preferred action (Press Q to Quit)")
     case "$_selectvalue" in
       "Add Contact")
       # Ask Contact Name
@@ -371,7 +434,7 @@ interactive() {
         ;;
       "Delete Contact")
       if [ -s "$mp/contact.list" ]; then
-        _subselectvalue=$(awk -F'|' '{ printf("%-25s | %-15s | %5s\n", $1, $2, $3) ; }' "$mp/contact.list" | $shellect -t "Delete selected contact")
+        _subselectvalue=$(awk -F'|' '{ printf("%-25s | %-15s | %5s\n", $1, $2, $3) ; }' "$mp/contact.list" | shellect -t "Delete selected contact")
         [ -z "$_subselectvalue" ] && return 1
         # Remove line containing list
         _arg_target_name=$(echo "$_subselectvalue" | awk -F'|' '{ gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1; exit }')
@@ -386,17 +449,17 @@ interactive() {
     ;;
     "Select from contact")
     if [ -s "$mp/contact.list" ]; then
-      _selectvalue=$(awk -F'|' '{ printf("%-25s | %-15s | %5s\n", $1, $2, $3) ; }' "$mp/contact.list" | $shellect -t "Select your contact")
+      _selectvalue=$(awk -F'|' '{ printf("%-25s | %-15s | %5s\n", $1, $2, $3) ; }' "$mp/contact.list" | shellect -t "Select your contact")
       [ -z "$_selectvalue" ] && return 1
       # Process the selected list
       _arg_target_number=$(echo "$_selectvalue" | awk -F'|' '{ print $2 }')
       # Ask string to be sent
-      _ask_input "Type string to send" _arg_target_string
+      _ask_input l "Type string to send" _arg_target_string
       # Ask images (if any)
       _ask_input "Images link or path (optional)" _arg_target_image
       # Validate the variable
       if [ "$_arg_target_string" ]; then
-        [ -n "$_arg_target_image" ] && assert_image "$_arg_target_image"
+        [ -n "$_arg_target_image" ] && assert_file img "$_arg_target_image"
         _packjson "$_arg_target_number" "$_arg_target_string" && _send
       else
         _dogger n "One of the input is empty"; return 1
@@ -417,8 +480,9 @@ Usage: sendwa [OPTION]...
   -o, --number=NUM        Number to send message
   -S, --shortname=ARG     Shortname to send message
   -t, --text=STRING       Text to send
-  -f, --text-file=FILE    Pick file containing string to send
+  -g, --text-file=FILE    Pick file containing string to send
   -i, --image=ARG         Send image file (ARG could be link to image or path to image)
+  -f, --file=ARG          Send document file (ARG could be link to image or path to file)
   -l, --contact-list      Print contact list
   -q, --quiet             Quiet mode
   -h, --help              Display this help section
@@ -454,7 +518,7 @@ if [ "$#" != 0 ]; then
       fi
       shift
       ;;
-      -f|--text-file)
+      -g|--text-file)
       _is_from_file="y"; _textfile="$1";
       if [ "$_is_text" ]; then
         _dogger n "This option cannot coexist with -t"
@@ -471,9 +535,15 @@ if [ "$#" != 0 ]; then
       -i|--image)
       _is_image=y; _img_input="$1"
       assert_argument "$1" "$opt"
-      assert_image "$_img_input"
+      assert_file img "$_img_input"
       shift
       ;;
+      # -f|--file)
+      # _is_doc=y; _doc_input="$1"
+      # assert_argument "$1" "$opt"
+      # assert_file doc "$_doc_input"
+      # shift
+      # ;;
       -S|--shortname)
       _is_sn=y; _sn_input="$1"
       if [ "$_is_num" ]; then
