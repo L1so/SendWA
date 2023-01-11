@@ -38,16 +38,6 @@ _packjson() {
       '. += {"target":"\($thephone)","message":"\($thetext)","url": "\($theimage)"}' \
       $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
     fi
-  # elif [ -n "$_is_doc" ]; then
-  #   if [ "$WA_PROVIDER" = "onesender" ]; then
-  #     $jq --arg thephone "$_argNumber" --arg thedoc "$_doc_file" \
-  #     '. += {"recipient_type":"individual","to":"\($thephone)","type":"document","document":{"link": "\($thedoc)"}}' \
-  #     $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
-  #   elif [ "$WA_PROVIDER" = "fonnte" ]; then
-  #     $jq --arg thephone "$_argNumber" --arg thedoc "$_doc_file" \
-  #     '. += {"target":"\($thephone)","url": "\($thedoc)"}' \
-  #     $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
-  #   fi
   else
     if [ "$WA_PROVIDER" = "onesender" ]; then
       $jq --arg thephone "$_argNumber" --arg thetext "$_argText" \
@@ -173,7 +163,6 @@ _pickProvider() {
   done
 }
 assert_file() {
-  # Differentiate between image and document
   if [ "$1" = "img" ]; then
     shift; _img_source="$1"; _is_img=y; _IMGBB_API="e8b28f1e0553caa8c140b12ef7561d61"
     if printf '%s' "$_img_source" | grep -qE '(https?|ftp|file)://[-[:alnum:]\+&@#/%?=~_|!:,.;]+'; then
@@ -187,15 +176,6 @@ assert_file() {
       _dogger n "Not an image file"
       return 1
     fi
-  # elif [ "$1" = "doc" ]; then
-  #   shift; _doc_source="$1"; _is_doc=y
-  #   if printf '%s' "$_doc_source" | grep -qE '(https?|ftp|file)://[-[:alnum:]\+&@#/%?=~_|!:,.;]+'; then
-  #     _doc_file="$_doc_source"
-  #   else
-  #     _logger n "Uploading file..."
-  #     _doc_file=$(_fgrab filepath "$_doc_source" | awk -F ': ' 'tolower($0) ~ /x-url-delete/{ print $2 }')
-  #     _logger n "File is uploaded on ${cgreen}${_doc_file%/*}"
-  #   fi
   fi
 }
 # Most commonly would be 64 bit
@@ -401,12 +381,9 @@ interactive() {
     _ask_input "Type string to send" _arg_target_string
     # Ask images (if any)
     _ask_input "Images link or path (optional)" _arg_target_image
-    # Ask document or file (if any)
-    #_ask_input "Document link or path (optional)" _arg_target_docs
     # Validate the variable
     if [ "$_arg_target_number" ] && [ "$_arg_target_string" ]; then
       [ -n "$_arg_target_image" ] && assert_file img "$_arg_target_image"
-      #[ -n "$_arg_target_docs" ] && assert_file doc "$_arg_target_docs"
       _packjson "$_arg_target_number" "$_arg_target_string" && _send
     else
       _dogger n "One of the input is empty"; return 1
@@ -482,7 +459,6 @@ Usage: sendwa [OPTION]...
   -t, --text=STRING       Text to send
   -g, --text-file=FILE    Pick file containing string to send
   -i, --image=ARG         Send image file (ARG could be link to image or path to image)
-  -f, --file=ARG          Send document file (ARG could be link to image or path to file)
   -l, --contact-list      Print contact list
   -q, --quiet             Quiet mode
   -h, --help              Display this help section
@@ -538,12 +514,6 @@ if [ "$#" != 0 ]; then
       assert_file img "$_img_input"
       shift
       ;;
-      # -f|--file)
-      # _is_doc=y; _doc_input="$1"
-      # assert_argument "$1" "$opt"
-      # assert_file doc "$_doc_input"
-      # shift
-      # ;;
       -S|--shortname)
       _is_sn=y; _sn_input="$1"
       if [ "$_is_num" ]; then
