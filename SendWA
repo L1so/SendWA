@@ -1,6 +1,6 @@
 #!/bin/bash
 # shellcheck disable=SC2030,SC2086,SC2181,SC2031,SC2015,SC2154
-currentVersion="v1.1"; rev_date="8 Jan 2023"; mp="$HOME/.sendwa"; envfile="$mp/file.env"
+currentVersion="v1.2"; rev_date="11 Jan 2023"; mp="$HOME/.sendwa"; envfile="$mp/file.env"
 sendthisjson="$mp/temporary.json"; rd_out=/dev/stdout
 if [ ! -d "$mp" ] && [ "$1" != "--install" ]; then
   >&2 printf "%s\n" "SendWA is not installed" "Please retry this script: $0 --install"
@@ -119,6 +119,10 @@ contactlist() {
   printf "+%63s+\n" | tr ' ' '='
   awk -F '|' '{ printf("| %-30s | %-15s | %-10s |\n", $1, substr($2, 1, length($2)-4)"****", $3) }' "$mp/contact.list"
   printf "+%63s+\n" | tr ' ' '-'
+}
+printenv() {
+  printf "%s\n" "sendwa is alias to ${mp}/sendwa.sh"
+  tail -n +2 $mp/file.env
 }
 # Define binary variable
 _jq_path="$mp/bin/jq"
@@ -460,6 +464,7 @@ Usage: sendwa [OPTION]...
   -g, --text-file=FILE    Pick file containing string to send
   -i, --image=ARG         Send image file (ARG could be link to image or path to image)
   -l, --contact-list      Print contact list
+  -p, --print-env         Print full path to script
   -q, --quiet             Quiet mode
   -h, --help              Display this help section
   -v, --version           Display version
@@ -489,7 +494,7 @@ if [ "$#" != 0 ]; then
       assert_argument "$1" "$opt"
       _is_text="y"; _text="$1"
       if [ "$_is_from_file" ]; then
-        _dogger n "This option cannot coexist with -f"
+        _dogger n "This option cannot coexist with -g"
         exit 1
       fi
       shift
@@ -525,6 +530,7 @@ if [ "$#" != 0 ]; then
       shift
       ;;
       -l|--contact-list) contactlist; exit 0;;
+      -p|--print-env) printenv; exit 0;;
       -q|--quiet) rd_out=/dev/null;;
       -h|--help) display_help; exit 0;;
       -v|--version) printf "%-8s %-1s %s\n" "Version" ":" "$currentVersion" "Revision" ":" "$rev_date"; exit 0;;
