@@ -21,7 +21,6 @@ Melalui `curl`.
 	./SendWA --install
 Masukkan API Key dan URL pada proses instalasi.
 ## Program Prasyarat
-- ImageMagick &rarr; untuk kirim gambar.
 - `curl` atau `wget` &rarr; untuk melakukan api call.
 - `jq` &rarr; untuk melakukan parsing JSON.
 
@@ -36,8 +35,8 @@ Berikut adalah daftar provider WA Gateway yang sudah di dukung oleh SendWA.
 
 Bagi provider yang mau diintegrasikan layanannya ke skrip ini, bisa kirim email ke liso17(at)proton.me dengan melampirkan data berikut.
 
-- URL dari API.
+- API URL.
 - API Key.
 - Nomor WhatsApp yang sudah disambungkan ke WA Gateway.
 
-Saya akan menanggapi formulir anda dalam waktu kurang lebih ~3 hari kerja jika tidak sibuk.
+Saya akan menanggapi formulir anda dalam waktu kurang lebih ~4 hari kerja jika tidak sibuk.
