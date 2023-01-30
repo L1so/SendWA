@@ -1,30 +1,27 @@
 #!/bin/bash
 # shellcheck disable=SC2030,SC2086,SC2181,SC2031,SC2015,SC2154
-currentVersion="v1.2"; rev_date="11 Jan 2023"; mp="$HOME/.sendwa"; envfile="$mp/file.env"
-sendthisjson="$mp/temporary.json"; rd_out=/dev/stdout
-if [ ! -d "$mp" ] && [ "$1" != "--install" ]; then
-  >&2 printf "%s\n" "SendWA is not installed" "Please retry this script: $0 --install"
-  exit 1
+currentVersion="v1.3"; rev_date="30 Jan 2023"; sendthisjson="$(mktemp --suffix=.json)"
+echo "{}" > $sendthisjson
+if [ -d "/opt/sendwa" ]; then
+  . /opt/sendwa/file.env
+elif [ -d "$HOME/.sendwa" ]; then
+  . $HOME/.sendwa/file.env
+else
+  [ "$1" != "--install" ] && { >&2 printf "%s\n" "SendWA is not installed" "Please retry this script: $0 --install"; exit 1 ; }
 fi
-[ -d "$mp" ] && echo "{}" > $sendthisjson
-[ -f "$envfile" ] && . $envfile
+
 _WA_PROVIDER=$(echo "$WA_PROVIDER" | sed 's/./\U&/')
 # Required Function
 is_installed() { command -v $1 >/dev/null 2>&1; }
 _logger() {
   [ "$1" = "n" ] && _ns="\n" && shift
-  printf "%b${_ns}" "${clyl}${_not_interactive:+$(date +"[%d %b %Y %l:%M:%S %p %Z]") }${csky}$*${creset}" > $rd_out && unset _ns
+  printf "%b${_ns}" "${clyl}${_not_interactive:+$(date +"[%d %b %Y %l:%M:%S %p %Z]") }${csky}$*${creset}" && unset _ns
 }
 _dogger() {
   [ "$1" = "n" ] && _ns="\n" && shift
-  >&2 printf "%b${_ns}" "${clyl}${_not_interactive:+$(date +"[%d %b %Y %l:%M:%S %p %Z]") }${cred}$*${creset}" > $rd_out && unset _ns
+  >&2 printf "%b${_ns}" "${clyl}${_not_interactive:+$(date +"[%d %b %Y %l:%M:%S %p %Z]") }${cred}$*${creset}" && unset _ns
 }
-_checkmark() {
-  printf "\033[65G%b\n" "${cgreen}[\342\234\224]${creset}"
-}
-_crossmark() {
-  printf "\033[65G%b\n" "${cred}[\342\235\214]${creset}"
-}
+_scs() { [ $? -eq 0 ] && printf "\033[65G%b\n" "${cgreen}[\342\234\224]${creset}" || { printf "\033[65G%b\n" "${cred}[\342\235\214]${creset}" && exit 1 ; }; }
 _packjson() {
   _argNumber="$1"
   _argText="$2"
@@ -113,21 +110,21 @@ _trimspace() {
     printf '%s' "$_trimvar"
 }
 contactlist() {
-  [ ! -s "$mp/contact.list" ] && { _dogger n "Contact list is empty"; exit 1 ; }
+  [ ! -s "$WA_INSTALL_DIR/contact.list" ] && { _dogger n "Contact list is empty"; exit 1 ; }
   printf "+%63s+\n" | tr ' ' '-'
   printf "| %-30s | %-15s | %-10s |\n" "Contact Name" "Contact Number" "Short Name"
   printf "+%63s+\n" | tr ' ' '='
-  awk -F '|' '{ printf("| %-30s | %-15s | %-10s |\n", $1, substr($2, 1, length($2)-4)"****", $3) }' "$mp/contact.list"
+  awk -F '|' '{ printf("| %-30s | %-15s | %-10s |\n", $1, substr($2, 1, length($2)-4)"****", $3) }' "$WA_INSTALL_DIR/contact.list"
   printf "+%63s+\n" | tr ' ' '-'
 }
 printenv() {
   printf "%s\n" "sendwa is alias to ${mp}/sendwa.sh"
-  tail -n +2 $mp/file.env
+  tail -n +2 $WA_INSTALL_DIR/file.env
 }
 # Define binary variable
-_jq_path="$mp/bin/jq"
+_jq_path="$WA_INSTALL_DIR/bin/jq"
 is_installed jq && jq="jq" || jq="$_jq_path/jq"
-_shellect_path="$mp/bin/shellect"
+_shellect_path="$WA_INSTALL_DIR/bin/shellect"
 shellect=$_shellect_path/shellect
 shellect() { $shellect -b "${cbsky}SendWA${creset} - Powered by ${cbgreen}${_WA_PROVIDER:-Shell Script}" "$@"; }
 # Prioritize curl over wget
@@ -165,6 +162,7 @@ _pickProvider() {
   select _provider in "$@"; do
     [ -n "$_provider" ] && { _provider=$(echo "$_provider" | tr '[:upper:]' '[:lower:]') && break; }
   done
+  [ "$_provider" = "fonnte" ] && wa_api_url="https://api.fonnte.com/send" || _ask_input l "Please insert your API URL" wa_api_url
 }
 assert_file() {
   if [ "$1" = "img" ]; then
@@ -248,8 +246,8 @@ detect_profile() {
   echo "$detected_profile"
 }
 _find_by_shortname() {
-  _thesn="$1"; [ ! -s "$mp/contact.list" ] && { _dogger n "Contact list is empty"; exit 1; }
-  awk -v no="$_thesn" -F'|' '$NF ~ no { print $2 }' "$mp/contact.list" 2>/dev/null
+  _thesn="$1"; [ ! -s "$WA_INSTALL_DIR/contact.list" ] && { _dogger n "Contact list is empty"; exit 1; }
+  awk -v no="$_thesn" -F'|' '$NF ~ no { print $2 }' "$WA_INSTALL_DIR/contact.list" 2>/dev/null
 }
 _send() {
   [ "$WA_PROVIDER" = "onesender" ] && _is_bearer=y
@@ -302,12 +300,13 @@ _send_test() {
   fi
 }
 install() {
-  _current_script_directory=$(dirname "$0")
-  [ -d "$mp" ] && { _logger n "Already installed"; exit 0; }
-  [ ! -f "${_current_script_directory}/update.sh" ] && { _dogger n "Missing files, please re-download from GitHub"; exit 1 ; }
-  header_intro; unset _not_interactive
+  _home_wa="$HOME/.sendwa"; _insmethod="local"; header_intro; unset _not_interactive
+  _ask_input "Press G for global install or ENTER to proceed with local install" install_method
+  if [ "$install_method" = "G" ] || [ "$install_method" = "g" ]; then
+    if [ "$(id -u)" -ne 0 ]; then _dogger n "Please re run this script as root"; exit 1; fi
+    _home_wa="/opt/sendwa"; _chmod_bit=644; _run_as_root=y; _insmethod="global"
+  fi
   _pickProvider "OneSender" "Fonnte"
-  [ "$_provider" = "fonnte" ] && wa_api_url="https://api.fonnte.com/send" || _ask_input l "Please insert your API URL" wa_api_url
   _ask_input l "Please insert your API Key" wa_api_key
   _ask_input lno "Please insert your (international) phone number (optional)" wa_test_phone_number
   if [ -n "$wa_test_phone_number" ]; then
@@ -318,42 +317,54 @@ install() {
   # Install configuration file
   _logger "Installing dependency"
   depencheck
-  [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
-  _logger "Creating configuration file on $mp"
-  mkdir -p $mp/logs $mp/bin $mp/gallery
-  cp ./update.sh $mp/update.sh && chmod 755 $mp/update.sh
-  cp ./file.env $envfile && chmod 600 $envfile
-  [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
+  _scs
+  _logger "Creating configuration file on $_home_wa"
+  mkdir -p $_home_wa/logs $_home_wa/bin
+  cp "$(readlink -f $0)" "${_home_wa}/sendwa.sh"; chmod 755 "${_home_wa}/sendwa.sh"
+  cp ./update.sh $_home_wa/update.sh; chmod 755 $_home_wa/update.sh
+  cp ./file.env $_home_wa/file.env; chmod "${_chmod_bit:-600}" $_home_wa/file.env
+  _scs
   # Install file
-  _logger "Install the script to $mp"
-  _profile="$(detect_profile)"
-  if [ "$_profile" ]; then
-    cp "$(readlink -f $0)" "${mp}/sendwa.sh"; chmod u+x "${mp}/sendwa.sh"
-    echo "alias sendwa=\"$mp/sendwa.sh\"" >> $_profile
-    echo "alias sendwa-update=\"$mp/update.sh\"" >> $_profile
+  _logger "Install the script to $_home_wa"
+  if [ -n "$_run_as_root" ]; then
+    ln -s $_home_wa/sendwa.sh /usr/local/bin/sendwa
+    ln -s $_home_wa/update.sh /usr/local/bin/sendwa-update
+  else
+    _profile="$(detect_profile)"
+    if [ "$_profile" ]; then
+      echo "alias sendwa=\"$_home_wa/sendwa.sh\"" >> $_profile
+      echo "alias sendwa-update=\"$_home_wa/update.sh\"" >> $_profile
+    fi
   fi
-  [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
+  _scs
   # Putting api config to env file
-  cat <<EOF >> $envfile
+  cat <<EOF >> $_home_wa/file.env
 WA_PROVIDER="$_provider"
 WA_API_KEY="$wa_api_key"
 WA_API_URL="$wa_api_url"
-WA_ALIAS_LOCATION="$_profile"
+WA_ALIAS_LOCATION="${_profile:-null}"
+WA_INSTALL_DIR="$_home_wa"
+WA_INSTALL_METHOD="$_insmethod"
 EOF
   # Closing
-  printf "${cgreen}%b${creset}\n" "SendWA has been installed" "Please execute . $_profile to apply changes" > $rd_out
+  printf "${cgreen}%b${creset}\n" "SendWA has been installed"
 }
 uninstall() {
   unset _not_interactive
   # Remove alias from sourced file
-  [ -f "$envfile" ] && . $envfile || { _dogger n "Something went wrong please retry" && exit 1; }
-  _logger "Removing SendWA alias from $WA_ALIAS_LOCATION"
-  grep -v "alias sendwa=\"$mp/sendwa.sh\"" $WA_ALIAS_LOCATION > /tmp/temp_reallytemp_bashrc && mv /tmp/temp_reallytemp_bashrc $WA_ALIAS_LOCATION
-  grep -v "alias sendwa-update=\"$mp/update.sh\"" $WA_ALIAS_LOCATION > /tmp/temp_reallytemp_bashrc && mv /tmp/temp_reallytemp_bashrc $WA_ALIAS_LOCATION
-  [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
-  _logger "Removing directory $mp"
-  rm -rf -- "$mp"
-  [ $? -eq 0 ] && _checkmark || { _crossmark; exit 0 ; }
+  [ -f "$WA_INSTALL_DIR/file.env" ] && . $WA_INSTALL_DIR/file.env || { _dogger n "Something went wrong please retry" && exit 1; }
+  if [ "$WA_INSTALL_METHOD" = "local" ]; then
+    _logger "Removing SendWA alias from $WA_ALIAS_LOCATION"
+    grep -v "alias sendwa=\"$WA_INSTALL_DIR/sendwa.sh\"" $WA_ALIAS_LOCATION > /tmp/temp_reallytemp_bashrc && mv /tmp/temp_reallytemp_bashrc $WA_ALIAS_LOCATION
+    grep -v "alias sendwa-update=\"$WA_INSTALL_DIR/update.sh\"" $WA_ALIAS_LOCATION > /tmp/temp_reallytemp_bashrc && mv /tmp/temp_reallytemp_bashrc $WA_ALIAS_LOCATION
+    _scs
+  else
+    _logger "Removing SendWA from /usr/local/bin"
+    rm -f /usr/local/bin/sendwa /usr/local/bin/sendwa-update
+  fi
+  _logger "Removing directory $WA_INSTALL_DIR"
+  rm -rf -- "$WA_INSTALL_DIR"
+  _scs
 }
 _split_by_comma() {
   _arr_source="$1"
@@ -365,7 +376,7 @@ formphone() {
   _delim=""; _joined=""
   if [ -n "$_is_sn" ]; then
     # Converting shortname to phone number
-    for sn in "${arr_shortname[@]}"; do arr_phonelist+=( $(awk -v no="$sn" -F'|' '$NF ~ no { print $2 }' "$mp/contact.list") ); done
+    for sn in "${arr_shortname[@]}"; do arr_phonelist+=( $(awk -v no="$sn" -F'|' '$NF ~ no { print $2 }' "$WA_INSTALL_DIR/contact.list") ); done
   fi
   for phone in "${arr_phonelist[@]}"; do
     [ -z "${phone##*[!0-9]*}" ] && { _dogger n "$phone must be valid number" && return 1 ; }
@@ -405,7 +416,7 @@ interactive() {
         _arg_contact_flower=$(echo "${_arg_contact_name%"${_arg_contact_name#?}"}" | tr '[:upper:]' '[:lower:]')
         _arg_contact_shortname="${_arg_contact_flower}${_arg_ranum}"
         # Populate contact list
-        echo "$_arg_contact_name|$_arg_target_number|${_arg_contact_shortname}" >> $mp/contact.list
+        echo "$_arg_contact_name|$_arg_target_number|${_arg_contact_shortname}" >> $WA_INSTALL_DIR/contact.list
         _logger n "Successfully saved contact, your shortname is: $_arg_contact_shortname"
       else
         _dogger n "Error adding contact, please make sure the input is correct"
@@ -413,13 +424,13 @@ interactive() {
       fi
         ;;
       "Delete Contact")
-      if [ -s "$mp/contact.list" ]; then
-        _subselectvalue=$(awk -F'|' '{ printf("%-25s | %-15s | %5s\n", $1, $2, $3) ; }' "$mp/contact.list" | shellect -t "Delete selected contact")
+      if [ -s "$WA_INSTALL_DIR/contact.list" ]; then
+        _subselectvalue=$(awk -F'|' '{ printf("%-25s | %-15s | %5s\n", $1, $2, $3) ; }' "$WA_INSTALL_DIR/contact.list" | shellect -t "Delete selected contact")
         [ -z "$_subselectvalue" ] && return 1
         # Remove line containing list
         _arg_target_name=$(echo "$_subselectvalue" | awk -F'|' '{ gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1; exit }')
         _arg_target_number=$(echo "$_subselectvalue" | awk -F'|' '{ gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit }')
-        awk -v number="$_arg_target_number" '$0 !~ number' $mp/contact.list > $mp/temp_contact.list && mv $mp/temp_contact.list $mp/contact.list
+        awk -v number="$_arg_target_number" '$0 !~ number' $WA_INSTALL_DIR/contact.list > $WA_INSTALL_DIR/temp_contact.list && mv $WA_INSTALL_DIR/temp_contact.list $WA_INSTALL_DIR/contact.list
         _logger n "Successfully deleting ${_arg_target_name} from contact list !"
       else
         _dogger n "Contact list is empty" && return 1
@@ -428,8 +439,8 @@ interactive() {
     esac
     ;;
     "Select from contact")
-    if [ -s "$mp/contact.list" ]; then
-      _selectvalue=$(awk -F'|' '{ printf("%-25s | %-15s | %5s\n", $1, $2, $3) ; }' "$mp/contact.list" | shellect -t "Select your contact")
+    if [ -s "$WA_INSTALL_DIR/contact.list" ]; then
+      _selectvalue=$(awk -F'|' '{ printf("%-25s | %-15s | %5s\n", $1, $2, $3) ; }' "$WA_INSTALL_DIR/contact.list" | shellect -t "Select your contact")
       [ -z "$_selectvalue" ] && return 1
       # Process the selected list
       _arg_target_number=$(echo "$_selectvalue" | awk -F'|' '{ print $2 }')
@@ -530,7 +541,7 @@ if [ "$#" != 0 ]; then
       ;;
       -l|--contact-list) contactlist; exit 0;;
       -p|--print-env) printenv; exit 0;;
-      -q|--quiet) rd_out=/dev/null;;
+      -q|--quiet) exec >/dev/null;;
       -h|--help) display_help; exit 0;;
       -v|--version) printf "%-8s %-1s %s\n" "Version" ":" "$currentVersion" "Revision" ":" "$rev_date"; exit 0;;
       -|''|[!-]*) set -- "$@" "$opt";;
