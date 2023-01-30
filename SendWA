@@ -359,8 +359,10 @@ uninstall() {
     grep -v "alias sendwa-update=\"$WA_INSTALL_DIR/update.sh\"" $WA_ALIAS_LOCATION > /tmp/temp_reallytemp_bashrc && mv /tmp/temp_reallytemp_bashrc $WA_ALIAS_LOCATION
     _scs
   else
+    [ "$(id -u)" -ne 0 ] && { _dogger n "Retry with root access"; exit 1 ; }
     _logger "Removing SendWA from /usr/local/bin"
     rm -f /usr/local/bin/sendwa /usr/local/bin/sendwa-update
+    _scs
   fi
   _logger "Removing directory $WA_INSTALL_DIR"
   rm -rf -- "$WA_INSTALL_DIR"
