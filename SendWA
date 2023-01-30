@@ -74,6 +74,14 @@ cleanup() {
 }
 trap 'cleanup; trap - EXIT; exit' EXIT INT HUP
 # End Required Function
+_binary_var() {
+  # Define binary variable
+  _jq_path="${WA_INSTALL_DIR:-$_home_wa}/bin/jq"
+  is_installed jq && jq="jq" || jq="$_jq_path/jq"
+  _shellect_path="${WA_INSTALL_DIR:-$_home_wa}/bin/shellect"
+  shellect=$_shellect_path/shellect
+}
+_binary_var
 disable_color() {
   unset cred cgreen cyellw cblue cyan csky clyl creset
 }
@@ -121,11 +129,6 @@ printenv() {
   printf "%s\n" "sendwa is alias to ${mp}/sendwa.sh"
   tail -n +2 $WA_INSTALL_DIR/file.env
 }
-# Define binary variable
-_jq_path="$WA_INSTALL_DIR/bin/jq"
-is_installed jq && jq="jq" || jq="$_jq_path/jq"
-_shellect_path="$WA_INSTALL_DIR/bin/shellect"
-shellect=$_shellect_path/shellect
 shellect() { $shellect -b "${cbsky}SendWA${creset} - Powered by ${cbgreen}${_WA_PROVIDER:-Shell Script}" "$@"; }
 # Prioritize curl over wget
 if is_installed curl; then
@@ -207,12 +210,12 @@ depencheck() {
       *) jqddl="https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux${jq_arch}";;
     esac
     _fgrab "$jqddl" "$_jq_path/jq"
-    [ $? -eq 0 ] && chmod u+x $_jq_path/jq
+    [ $? -eq 0 ] && chmod 755 $_jq_path/jq
   fi
   # shellect script
   mkdir -p $_shellect_path
   _fgrab "https://raw.githubusercontent.com/huijunchen9260/shellect/main/shellect" "$_shellect_path/shellect"
-  [ $? -eq 0 ] && chmod u+x $shellect
+  [ $? -eq 0 ] && chmod 755 $shellect
 }
 detect_profile() {
   if [ -n "$PROFILE" -a -f "$PROFILE" ]; then
@@ -305,6 +308,8 @@ install() {
   if [ "$install_method" = "G" ] || [ "$install_method" = "g" ]; then
     if [ "$(id -u)" -ne 0 ]; then _dogger n "Please re run this script as root"; exit 1; fi
     _home_wa="/opt/sendwa"; _chmod_bit=644; _run_as_root=y; _insmethod="global"
+  else
+    if [ "$(id -u)" -eq 0 ]; then _dogger n "Please re run this script WITHOUT root"; exit 1; fi
   fi
   _pickProvider "OneSender" "Fonnte"
   _ask_input l "Please insert your API Key" wa_api_key
@@ -316,7 +321,7 @@ install() {
   fi
   # Install configuration file
   _logger "Installing dependency"
-  depencheck
+  _binary_var; depencheck
   _scs
   _logger "Creating configuration file on $_home_wa"
   mkdir -p $_home_wa/logs $_home_wa/bin
@@ -387,6 +392,7 @@ formphone() {
   _packjson "$_joined" "$_text"
 }
 interactive() {
+  if [ "$WA_INSTALL_METHOD" = "global" ]; then [ "$(id -u)" -ne 0 ] && { _dogger n "Retry with root access !"; exit 1 ; }; fi
   # Select menu
   _menuvalue=$(printf '%s\n' "Send Message" "Add/Delete Contact" "Select from contact" | shellect -t "Please choose your preferred action (Press Q to Quit)")
   case "$_menuvalue" in
@@ -519,7 +525,7 @@ if [ "$#" != 0 ]; then
       fi
       assert_argument "$1" "$opt"
       if [ -s "$_textfile" ]; then
-        _logger n "Retrieving content of $_textfile" && _text=$(cat $_textfile)
+        _logger n "Retrieving content of $_textfile" && _text=$(<$_textfile)
       else
         _dogger n "$_textfile is empty"; exit 1
       fi
