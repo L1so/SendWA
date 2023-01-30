@@ -9,6 +9,9 @@ fi
 _info() {
   printf "%s\n" "$(date +"[%d %b %Y %l:%M:%S %p %Z]") $*"
 }
+if [ "$WA_INSTALL_METHOD" = "global" ]; then
+  [ "$(id -u)" -ne 0 ] && { _info "Retry with root access !"; exit 1 ; }
+fi
 _grab() {
   _link="$1"
   if command -v curl >/dev/null 2>&1; then
