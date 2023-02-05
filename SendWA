@@ -576,7 +576,7 @@ main() {
   [ -n "$_is_uninstall" ] && uninstall
   [ -n "$_is_contact" ] && contactlist
   [ -n "$_is_penv" ] && printenv
-  if ! { [ -n "$_is_text" ] && { [ -n "$_is_num" ] || [ -n "$_is_sn" ] || [ -n "$_is_from_file" ] ; } ; }; then
+  if ! { { [ -n "$_is_text" ] || [ -n "$_is_from_file" ] ; } && { [ -n "$_is_num" ] || [ -n "$_is_sn" ] ; } ; }; then
     _dogger n "Missing text input !" && exit 2
   fi
   formphone && _send
