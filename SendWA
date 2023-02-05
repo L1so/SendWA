@@ -1,7 +1,25 @@
-#!/bin/bash
-# shellcheck disable=SC2030,SC2086,SC2181,SC2031,SC2015,SC2154
+#!/usr/bin/env bash
 currentVersion="v1.3"; rev_date="30 Jan 2023"; sendthisjson="$(mktemp --suffix=.json)"
+disable_color() { unset cred cgreen cyellw clyl cyan csky cbgreen cbsky _rclyl _rcsky _rcres; }
+if [ "$(tput colors)" -ne "256" ]; then
+  disable_color
+else
+  if [ -t 1 ]; then
+    # Non bold
+    _rclyl=$'\001\e[00;93m\002'; _rcsky=$'\001\e[00;96m\002'; _rcres=$'\001\e[0m\002'
+    cred=$(tput sgr0; tput setaf 1 ${is_bsd:+0 0}); clyl=$(tput sgr0; tput setaf 11 ${is_bsd:+0 0})
+    cgreen=$(tput sgr0; tput setaf 2 ${is_bsd:+0 0}); cyan=$(tput sgr0; tput setaf 6 ${is_bsd:+0 0})
+    cyellw=$(tput sgr0; tput setaf 215 ${is_bsd:+0 0}); csky=$(tput sgr0; tput setaf 14 ${is_bsd:+0 0})
+    # Bold
+    cbgreen=$(tput bold; tput setaf 2 ${is_bsd:+0 0}); cbsky=$(tput bold; tput setaf 14 ${is_bsd:+0 0})
+    # Reset color
+    creset=$(tput sgr0)
+  else
+    disable_color
+  fi
+fi
 echo "{}" > $sendthisjson
+# Check for env file
 if [ -d "/opt/sendwa" ]; then
   . /opt/sendwa/file.env
 elif [ -d "$HOME/.sendwa" ]; then
@@ -9,9 +27,9 @@ elif [ -d "$HOME/.sendwa" ]; then
 else
   [ "$1" != "--install" ] && { >&2 printf "%s\n" "SendWA is not installed" "Please retry this script: $0 --install"; exit 1 ; }
 fi
-
+# Turn fonnte to Fonnte
 _WA_PROVIDER=$(echo "$WA_PROVIDER" | sed 's/./\U&/')
-# Required Function
+# RF
 is_installed() { command -v $1 >/dev/null 2>&1; }
 _logger() {
   [ "$1" = "n" ] && _ns="\n" && shift
@@ -51,7 +69,7 @@ _ask_input() {
   [ "$1" = "l" ] && _limit=y && shift
   [ "$1" = "ln" ] && _limitnum=y && shift
   [ "$1" = "lno" ] && _limitnumop=y && shift
-  _rclyl=$'\001\e[00;93m\002'; _rcsky=$'\001\e[00;96m\002'; _rcres=$'\001\e[0m\002'; _question="$1"; _thevar="$2"
+  _question="$1"; _thevar="$2"
   read -p "${_rclyl}${_not_interactive:+$(date +"[%D %T]") }${_rcsky}${_question}: ${_rcres}" -e "$_thevar"
   _isivar="${!_thevar}"
   if [ -n "$_limit" ]; then
@@ -73,49 +91,13 @@ cleanup() {
   rm -f $sendthisjson
 }
 trap 'cleanup; trap - EXIT; exit' EXIT INT HUP
-# End Required Function
+#E-RF
 _binary_var() {
   # Define binary variable
   _jq_path="${WA_INSTALL_DIR:-$_home_wa}/bin/jq"
   is_installed jq && jq="jq" || jq="$_jq_path/jq"
   _shellect_path="${WA_INSTALL_DIR:-$_home_wa}/bin/shellect"
   shellect=$_shellect_path/shellect
-}
-_binary_var
-disable_color() {
-  unset cred cgreen cyellw cblue cyan csky clyl creset
-}
-# Coloring
-if [ "$(tput colors)" -ne "256" ]; then
-  disable_color
-else
-  if [ -t 1 ]; then
-    # Non bold
-    cred=$(tput sgr0; tput setaf 1 ${is_bsd:+0 0}); clyl=$(tput sgr0; tput setaf 11 ${is_bsd:+0 0})
-    cgreen=$(tput sgr0; tput setaf 2 ${is_bsd:+0 0}); cyan=$(tput sgr0; tput setaf 6 ${is_bsd:+0 0})
-    cyellw=$(tput sgr0; tput setaf 215 ${is_bsd:+0 0}); csky=$(tput sgr0; tput setaf 14 ${is_bsd:+0 0})
-    # Bold
-    cbgreen=$(tput bold; tput setaf 2 ${is_bsd:+0 0}); cbsky=$(tput bold; tput setaf 14 ${is_bsd:+0 0})
-    # Reset color
-    creset=$(tput sgr0)
-  else
-    disable_color
-  fi
-fi
-header_intro() {
-  {
-    printf "${cyan}%s\n" "# # # # # # # # # # # # # # # # # # # # # #"
-    printf "%s%s\n" "#${clyl} SendWA - Send Whatsapp from Terminal ! ${cyan} #"
-    printf "%s\n" "# # # # # # # # # # # # # # # # # # # # # #${creset}"
-  }
-}
-_trimspace() {
-    _trimvar="$*"
-    # remove leading whitespace characters
-    _trimvar="${_trimvar#"${_trimvar%%[![:space:]]*}"}"
-    # remove trailing whitespace characters
-    _trimvar="${_trimvar%"${_trimvar##*[![:space:]]}"}"
-    printf '%s' "$_trimvar"
 }
 contactlist() {
   [ ! -s "$WA_INSTALL_DIR/contact.list" ] && { _dogger n "Contact list is empty"; exit 1 ; }
@@ -130,17 +112,19 @@ printenv() {
   tail -n +2 $WA_INSTALL_DIR/file.env
 }
 shellect() { $shellect -b "${cbsky}SendWA${creset} - Powered by ${cbgreen}${_WA_PROVIDER:-Shell Script}" "$@"; }
-# Prioritize curl over wget
-if is_installed curl; then
-  # 0 Implies curl
-  _fg=c
-elif is_installed wget; then
-  # 1 Implies wget
-  _fg=w
-else
-  _dogger n "Neither wget nor curl is exist" "Please install it first"
-  exit 1
-fi
+_curlOrWget() {
+  # Prioritize curl over wget
+  if is_installed curl; then
+    # 0 Implies curl
+    _fg=c
+  elif is_installed wget; then
+    # 1 Implies wget
+    _fg=w
+  else
+    _dogger n "Neither wget nor curl is exist" "Please install it first"
+    exit 1
+  fi
+}
 _fgrab() {
   ddl_input="$1"
   if [ "$_fg" = "c" ]; then
@@ -183,25 +167,25 @@ assert_file() {
     fi
   fi
 }
-# Most commonly would be 64 bit
-case "$(uname -m)" in
-  *x86_64*|*amd64*)
-  arch="x86_64"
-  jq_arch="64"
-  ;;
-  *i?86*)
-  arch="i386"
-  jq_arch="32"
-  ;;
-  *arm*|*aarch*)
-  case "$(getconf LONG_BIT)" in
-    *64*) arch="aarch64";;
-    *) arch="armhf";;
-  esac
-  ;;
-  *) die "Architecture not found"; exit 1;;
-esac
 depencheck() {
+  # Most commonly would be 64 bit
+  case "$(uname -m)" in
+    *x86_64*|*amd64*)
+    arch="x86_64"
+    jq_arch="64"
+    ;;
+    *i?86*)
+    arch="i386"
+    jq_arch="32"
+    ;;
+    *arm*|*aarch*)
+    case "$(getconf LONG_BIT)" in
+      *64*) arch="aarch64";;
+      *) arch="armhf";;
+    esac
+    ;;
+    *) _dogger n "Architecture not found"; exit 1;;
+  esac
   # jq binary
   if [ "$jq" != "jq" ] && [ ! -f "$_jq_path/jq" ]; then
     mkdir -p $_jq_path
@@ -537,6 +521,15 @@ if [ "$#" != 0 ]; then
       assert_file img "$_img_input"
       shift
       ;;
+      -c|--color)
+      assert_argument "$1" "$opt"
+      colchoice="$1"
+      case "$colchoice" in
+        yes) :;; # Default
+        no) disable_color;;
+        *) _dogger n "Valid value is yes|no|force"; exit 2;;
+      esac
+      shift ;;
       -S|--shortname)
       _is_sn=y; _sn_input="$1"
       if [ "$_is_num" ]; then
