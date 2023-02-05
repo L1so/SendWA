@@ -1,23 +1,25 @@
 #!/usr/bin/env bash
-currentVersion="v1.3"; rev_date="30 Jan 2023"; sendthisjson="$(mktemp --suffix=.json)"
+currentVersion="v1.3"; rev_date="30 Jan 2023"; sendthisjson="$(mktemp --suffix=.json)"; _color=y
 disable_color() { unset cred cgreen cyellw clyl cyan csky cbgreen cbsky _rclyl _rcsky _rcres; }
-if [ "$(tput colors)" -ne "256" ]; then
-  disable_color
-else
-  if [ -t 1 ]; then
-    # Non bold
-    _rclyl=$'\001\e[00;93m\002'; _rcsky=$'\001\e[00;96m\002'; _rcres=$'\001\e[0m\002'
-    cred=$(tput sgr0; tput setaf 1 ${is_bsd:+0 0}); clyl=$(tput sgr0; tput setaf 11 ${is_bsd:+0 0})
-    cgreen=$(tput sgr0; tput setaf 2 ${is_bsd:+0 0}); cyan=$(tput sgr0; tput setaf 6 ${is_bsd:+0 0})
-    cyellw=$(tput sgr0; tput setaf 215 ${is_bsd:+0 0}); csky=$(tput sgr0; tput setaf 14 ${is_bsd:+0 0})
-    # Bold
-    cbgreen=$(tput bold; tput setaf 2 ${is_bsd:+0 0}); cbsky=$(tput bold; tput setaf 14 ${is_bsd:+0 0})
-    # Reset color
-    creset=$(tput sgr0)
-  else
+coldef() {
+  if [ "$_color" = "n" ] || [ "$(tput colors)" -ne 256 ]; then
     disable_color
+  else
+    if [ -t 1 ]; then
+      # Non bold
+      _rclyl=$'\001\e[00;93m\002'; _rcsky=$'\001\e[00;96m\002'; _rcres=$'\001\e[0m\002'
+      cred=$(tput sgr0; tput setaf 1 ${is_bsd:+0 0}); clyl=$(tput sgr0; tput setaf 11 ${is_bsd:+0 0})
+      cgreen=$(tput sgr0; tput setaf 2 ${is_bsd:+0 0}); cyan=$(tput sgr0; tput setaf 6 ${is_bsd:+0 0})
+      cyellw=$(tput sgr0; tput setaf 215 ${is_bsd:+0 0}); csky=$(tput sgr0; tput setaf 14 ${is_bsd:+0 0})
+      # Bold
+      cbgreen=$(tput bold; tput setaf 2 ${is_bsd:+0 0}); cbsky=$(tput bold; tput setaf 14 ${is_bsd:+0 0})
+      # Reset color
+      creset=$(tput sgr0)
+    else
+      disable_color
+    fi
   fi
-fi
+}
 echo "{}" > $sendthisjson
 # Check for env file
 if [ -d "/opt/sendwa" ]; then
@@ -106,13 +108,14 @@ contactlist() {
   printf "+%63s+\n" | tr ' ' '='
   awk -F '|' '{ printf("| %-30s | %-15s | %-10s |\n", $1, substr($2, 1, length($2)-4)"****", $3) }' "$WA_INSTALL_DIR/contact.list"
   printf "+%63s+\n" | tr ' ' '-'
+  exit 0
 }
 printenv() {
   printf "%s\n" "sendwa is alias to ${mp}/sendwa.sh"
-  tail -n +2 $WA_INSTALL_DIR/file.env
+  tail -n +2 $WA_INSTALL_DIR/file.env && exit 0
 }
 shellect() { $shellect -b "${cbsky}SendWA${creset} - Powered by ${cbgreen}${_WA_PROVIDER:-Shell Script}" "$@"; }
-_curlOrWget() {
+dlchoice() {
   # Prioritize curl over wget
   if is_installed curl; then
     # 0 Implies curl
@@ -336,7 +339,7 @@ WA_INSTALL_DIR="$_home_wa"
 WA_INSTALL_METHOD="$_insmethod"
 EOF
   # Closing
-  printf "${cgreen}%b${creset}\n" "SendWA has been installed"
+  printf "${cgreen}%b${creset}\n" "SendWA has been installed"; exit 0
 }
 uninstall() {
   unset _not_interactive
@@ -355,7 +358,14 @@ uninstall() {
   fi
   _logger "Removing directory $WA_INSTALL_DIR"
   rm -rf -- "$WA_INSTALL_DIR"
-  _scs
+  _scs && exit 0
+}
+header_intro() {
+  {
+    printf "${cyan}%s\n" "# # # # # # # # # # # # # # # # # # # # # #"
+    printf "%s%s\n" "#${clyl} SendWA - Send Whatsapp from Terminal ! ${cyan} #"
+    printf "%s\n" "# # # # # # # # # # # # # # # # # # # # # #${creset}"
+  }
 }
 _split_by_comma() {
   _arr_source="$1"
@@ -480,8 +490,8 @@ if [ "$#" != 0 ]; then
   while [ "$1" != "$endofline" ]; do
     opt="$1"; shift
     case "$opt" in
-      --install) install && exit 0;;
-      --uninstall) uninstall && exit 0;;
+      --install) _is_install=y;;
+      --uninstall) _is_uninstall=y;;
       -o|--number)
       _is_num=y; phonelist="$1"
       if [ "$_is_sn" ]; then
@@ -525,8 +535,8 @@ if [ "$#" != 0 ]; then
       assert_argument "$1" "$opt"
       colchoice="$1"
       case "$colchoice" in
-        yes) :;; # Default
-        no) disable_color;;
+        yes) _color=y;; # Default
+        no) _color=n;;
         *) _dogger n "Valid value is yes|no|force"; exit 2;;
       esac
       shift ;;
@@ -540,8 +550,8 @@ if [ "$#" != 0 ]; then
       _split_by_comma "$_sn_input" arr_shortname
       shift
       ;;
-      -l|--contact-list) contactlist; exit 0;;
-      -p|--print-env) printenv; exit 0;;
+      -l|--contact-list) _is_contact=y;;
+      -p|--print-env) _is_penv=y;;
       -q|--quiet) exec >/dev/null;;
       -h|--help) display_help; exit 0;;
       -v|--version) printf "%-8s %-1s %s\n" "Version" ":" "$currentVersion" "Revision" ":" "$rev_date"; exit 0;;
@@ -556,10 +566,19 @@ if [ "$#" != 0 ]; then
   shift
 else
   # Interactive mode
+  coldef; dlchoice; _binary_var
   interactive; exit 0
 fi
 # END OPTION PARSING
 main() {
+  coldef; dlchoice; _binary_var
+  [ -n "$_is_install" ] && install
+  [ -n "$_is_uninstall" ] && uninstall
+  [ -n "$_is_contact" ] && contactlist
+  [ -n "$_is_penv" ] && printenv
+  if ! { [ -n "$_is_text" ] && { [ -n "$_is_num" ] || [ -n "$_is_sn" ] ; } ; }; then
+    _dogger n "Missing text input !" && exit 2
+  fi
   formphone && _send
 }
 main
