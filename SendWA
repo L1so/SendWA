@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-currentVersion="v1.3"; rev_date="30 Jan 2023"; sendthisjson="$(mktemp --suffix=.json)"; _color=y
+currentVersion="v1.4"; rev_date="8 Feb 2024"; sendthisjson="$(mktemp --suffix=.json)"; _color=y
 disable_color() { unset cred cgreen cyellw clyl cyan csky cbgreen cbsky _rclyl _rcsky _rcres; }
 coldef() {
   if [ "$_color" = "n" ] || [ "$(tput colors)" -ne 256 ]; then
@@ -45,10 +45,11 @@ _scs() { [ $? -eq 0 ] && printf "\033[65G%b\n" "${cgreen}[\342\234\224]${creset}
 _packjson() {
   _argNumber="$1"
   _argText="$2"
+  [ "$_is_group" ] && _recipient_type="group" || _recipient_type="individual"
   if [ -n "$_is_image" ]; then
     if [ "$WA_PROVIDER" = "onesender" ]; then
-      $jq --arg thephone "$_argNumber" --arg thetext "$_argText" --arg theimage "$_img_file" \
-      '. += {"recipient_type":"individual","to":"\($thephone)","type":"image","image":{"link": "\($theimage)", "caption": "\($thetext)"}}' \
+      $jq --arg thephone "$_argNumber" --arg thetext "$_argText" --arg theimage "$_img_file" --arg thetype "$_recipient_type" \
+      '. += {"recipient_type":"\($thetype)","to":"\($thephone)","type":"image","image":{"link": "\($theimage)", "caption": "\($thetext)"}}' \
       $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
     elif [ "$WA_PROVIDER" = "fonnte" ]; then
       $jq --arg thephone "$_argNumber" --arg thetext "$_argText" --arg theimage "$_img_file" \
@@ -57,8 +58,8 @@ _packjson() {
     fi
   else
     if [ "$WA_PROVIDER" = "onesender" ]; then
-      $jq --arg thephone "$_argNumber" --arg thetext "$_argText" \
-      '. += {"recipient_type":"individual","to":"\($thephone)","type":"text","text":{"body": "\($thetext)"}}' \
+      $jq --arg thephone "$_argNumber" --arg thetext "$_argText" --arg thetype "$_recipient_type" \
+      '. += {"recipient_type":"\($thetype)","to":"\($thephone)","type":"text","text":{"body": "\($thetext)"}}' \
       $sendthisjson > /tmp/temp.json && mv /tmp/temp.json $sendthisjson
     elif [ "$WA_PROVIDER" = "fonnte" ]; then
       $jq --arg thephone "$_argNumber" --arg thetext "$_argText" '. += {"target":"\($thephone)","message":"\($thetext)"}' \
@@ -377,11 +378,11 @@ formphone() {
   _delim=""; _joined=""
   if [ -n "$_is_sn" ]; then
     # Converting shortname to phone number
-    for sn in "${arr_shortname[@]}"; do arr_phonelist+=( $(awk -v no="$sn" -F'|' '$NF ~ no { print $2 }' "$WA_INSTALL_DIR/contact.list") ); done
+    for sn in "${arr_shortname[@]}"; do arr_list+=( $(awk -v no="$sn" -F'|' '$NF ~ no { print $2 }' "$WA_INSTALL_DIR/contact.list") ); done
   fi
-  for phone in "${arr_phonelist[@]}"; do
-    [ -z "${phone##*[!0-9]*}" ] && { _dogger n "$phone must be valid number" && return 1 ; }
-    _joined="$_joined$_delim$phone"; _delim=","
+  for phoneAndGroup in "${arr_list[@]}"; do
+    [ -z "$_is_group" ] && { [ -z "${phoneAndGroup##*[!0-9]*}" ] && { _dogger n "$phoneAndGroup must be valid number" && return 1 ; } ; }
+    _joined="$_joined$_delim$phoneAndGroup"; _delim=","
   done
   _packjson "$_joined" "$_text"
 }
@@ -473,7 +474,8 @@ Usage: sendwa [OPTION]...
   -o, --number=NUM        Number to send message
   -S, --shortname=ARG     Shortname to send message
   -t, --text=STRING       Text to send
-  -g, --text-file=FILE    Pick file containing string to send
+  -k, --text-file=FILE    Pick file containing string to send
+  -g, --group=ARG         Send to certain group (require group id)
   -i, --image=ARG         Send image file (ARG could be link to image or path to image)
   -l, --contact-list      Print contact list
   -p, --print-env         Print full path to script
@@ -499,7 +501,17 @@ if [ "$#" != 0 ]; then
         exit 1
       fi
       assert_argument "$1" "$opt"
-      _split_by_comma "$phonelist" arr_phonelist
+      _split_by_comma "$phonelist" arr_list
+      shift
+      ;;
+      -g|--group)
+      _is_group=y; grouplist="$1"
+      if [ "$_is_sn" ] || [ "$_is_num" ]; then
+        _dogger n "This option cannot coexist with -S or -o"
+        exit 1
+      fi
+      assert_argument "$1" "$opt"
+      _split_by_comma "$grouplist" arr_list
       shift
       ;;
       -t|--text)
@@ -511,7 +523,7 @@ if [ "$#" != 0 ]; then
       fi
       shift
       ;;
-      -g|--text-file)
+      -k|--text-file)
       _is_from_file="y"; _textfile="$1";
       if [ "$_is_text" ]; then
         _dogger n "This option cannot coexist with -t"
@@ -576,7 +588,7 @@ main() {
   [ -n "$_is_uninstall" ] && uninstall
   [ -n "$_is_contact" ] && contactlist
   [ -n "$_is_penv" ] && printenv
-  if ! { { [ -n "$_is_text" ] || [ -n "$_is_from_file" ] ; } && { [ -n "$_is_num" ] || [ -n "$_is_sn" ] ; } ; }; then
+  if ! { { [ -n "$_is_text" ] || [ -n "$_is_from_file" ] ; } && { [ -n "$_is_num" ] || [ -n "$_is_sn" ] || [ -n "$_is_group" ] ; } ; }; then
     _dogger n "Missing text input !" && exit 2
   fi
   formphone && _send
