@@ -292,6 +292,7 @@ _send_test() {
 }
 install() {
   _home_wa="$HOME/.sendwa"; _insmethod="local"; header_intro; unset _not_interactive
+  _scriptdir="$(dirname "$(readlink -f "$0")")"
   _ask_input "Press G for global install or ENTER to proceed with local install" install_method
   if [ "$install_method" = "G" ] || [ "$install_method" = "g" ]; then
     if [ "$(id -u)" -ne 0 ]; then _dogger n "Please re run this script as root"; exit 1; fi
@@ -314,8 +315,8 @@ install() {
   _logger "Creating configuration file on $_home_wa"
   mkdir -p $_home_wa/logs $_home_wa/bin
   cp "$(readlink -f $0)" "${_home_wa}/sendwa.sh"; chmod 755 "${_home_wa}/sendwa.sh"
-  cp ./update.sh $_home_wa/update.sh; chmod 755 $_home_wa/update.sh
-  cp ./file.env $_home_wa/file.env; chmod "${_chmod_bit:-600}" $_home_wa/file.env
+  cp ${_scriptdir}/update.sh $_home_wa/update.sh; chmod 755 $_home_wa/update.sh
+  cp ${_scriptdir}/file.env $_home_wa/file.env; chmod "${_chmod_bit:-600}" $_home_wa/file.env
   _scs
   # Install file
   _logger "Install the script to $_home_wa"
